@@ -17,7 +17,7 @@ import { WIEntry } from 'sillytavern-utils-lib/types/world-info';
 import * as Handlebars from 'handlebars';
 import '../handlebars-helpers.js';
 
-import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS, DebugCapture } from '../generate.js';
+import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS, DEFAULT_FIELD_MAX_RESPONSE_TOKENS, DebugCapture } from '../generate.js';
 import { ExtensionSettings, settingsManager, convertToVariableName, VERSION } from '../settings.js';
 import { useForceUpdate } from '../hooks/useForceUpdate.js';
 import { CharacterField } from './CharacterField.js';
@@ -329,6 +329,8 @@ export const MainPopup: FC = () => {
         ),
         includeUserMacro: settings.contextToSend.persona,
         maxResponseToken: settings.maxResponseToken,
+        fieldMaxResponseTokens: settings.fieldMaxResponseTokens,
+        useWorldInfoActivationScan: settings.useWorldInfoActivationScan,
         targetField: targetField,
         outputFormat: settings.outputFormat,
       });
@@ -1048,6 +1050,58 @@ export const MainPopup: FC = () => {
                     onChange={(e) => updateSetting('showDebugView', e.target.checked)}
                   />{' '}
                   Show per-field debug view (captured last prompt + response)
+                </label>
+                <div className="crec-field-token-grid">
+                  <div className="crec-field-token-grid-header">
+                    <span>Per-field max response tokens</span>
+                    <button
+                      type="button"
+                      className="menu_button crec-field-token-reset"
+                      title="Reset all per-field overrides to built-in defaults (clears overrides, falls back to DEFAULT_FIELD_MAX_RESPONSE_TOKENS)"
+                      onClick={() => updateSetting('fieldMaxResponseTokens', {})}
+                    >
+                      <i className="fa-solid fa-arrow-rotate-left" aria-hidden="true" /> Reset
+                    </button>
+                  </div>
+                  {CHARACTER_FIELDS.map((field) => {
+                    const overrides = settings.fieldMaxResponseTokens ?? {};
+                    const current = overrides[field];
+                    const builtin = DEFAULT_FIELD_MAX_RESPONSE_TOKENS[field];
+                    const isOverride = current !== undefined;
+                    return (
+                      <label key={field} className="crec-field-token-row" title={isOverride ? `Override (built-in default: ${builtin})` : `Built-in default`}>
+                        <span className="crec-field-token-label">{CHARACTER_LABELS[field]}</span>
+                        <input
+                          type="number"
+                          className="text_pole crec-field-token-input"
+                          min={64}
+                          max={8192}
+                          placeholder={String(builtin)}
+                          value={isOverride ? String(current) : ''}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const parsed = parseInt(raw, 10);
+                            const next = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+                            const prevOverrides = { ...(settings.fieldMaxResponseTokens ?? {}) };
+                            if (next === undefined) {
+                              delete prevOverrides[field];
+                            } else {
+                              prevOverrides[field] = next;
+                            }
+                            updateSetting('fieldMaxResponseTokens', prevOverrides);
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                <label className="checkbox_label crec-wi-scan-toggle" title="When enabled, only lorebook entries whose keys activated for the current chat are sent to the LLM. Falls back to sending all enabled entries of selected lorebooks if this SillyTavern version does not expose the World Info scan API.">
+                  <input
+                    type="checkbox"
+                    checked={settings.useWorldInfoActivationScan}
+                    onChange={(e) => updateSetting('useWorldInfoActivationScan', e.target.checked)}
+                  />{' '}
+                  Use World Info activation scan (only send lorebook entries whose keys triggered for the current chat)
                 </label>
               </div>
             )}

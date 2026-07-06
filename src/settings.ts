@@ -16,8 +16,8 @@ import {
 import { globalContext } from './generate.js';
 
 export const extensionName = 'SillyTavern-Character-Creator';
-export const VERSION = '0.4.0';
-export const FORMAT_VERSION = 'F_2.0';
+export const VERSION = '0.4.1';
+export const FORMAT_VERSION = 'F_2.1';
 
 export const KEYS = {
   EXTENSION: 'charCreator',
@@ -72,6 +72,8 @@ export interface ExtensionSettings {
   maxContextType: 'profile' | 'sampler' | 'custom';
   maxContextValue: number;
   maxResponseToken: number;
+  fieldMaxResponseTokens: Record<string, number>;
+  useWorldInfoActivationScan: boolean;
   outputFormat: OutputFormat;
   contextToSend: ContextToSend;
 
@@ -155,6 +157,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   maxContextType: 'profile',
   maxContextValue: 16384,
   maxResponseToken: 1024,
+  fieldMaxResponseTokens: {},
+  useWorldInfoActivationScan: false,
   outputFormat: 'xml',
   contextToSend: {
     stDescription: true,
@@ -248,11 +252,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       prompts: [
         {
           enabled: true,
-          promptName: 'chatHistory',
-          role: 'system',
-        },
-        {
-          enabled: true,
           promptName: 'stDescription',
           role: 'system',
         },
@@ -274,6 +273,11 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
         {
           enabled: true,
           promptName: 'personaDescription',
+          role: 'system',
+        },
+        {
+          enabled: true,
+          promptName: 'chatHistory',
           role: 'system',
         },
         {
@@ -499,11 +503,6 @@ export async function initializeSettings(): Promise<void> {
                     prompts: [
                       {
                         enabled: true,
-                        promptName: 'chatHistory',
-                        role: 'system',
-                      },
-                      {
-                        enabled: true,
                         promptName: 'stDescription',
                         role: 'system',
                       },
@@ -525,6 +524,11 @@ export async function initializeSettings(): Promise<void> {
                       {
                         enabled: true,
                         promptName: 'personaDescription',
+                        role: 'system',
+                      },
+                      {
+                        enabled: true,
+                        promptName: 'chatHistory',
                         role: 'system',
                       },
                       {
@@ -661,6 +665,57 @@ export async function initializeSettings(): Promise<void> {
               response.showDebugView = false;
 
               return response as ExtensionSettings;
+            },
+          },
+          {
+            from: 'F_2.0',
+            to: 'F_2.1',
+            action(previous: ExtensionSettings): ExtensionSettings {
+              const response = { ...previous } as ExtensionSettings;
+
+              const ST_NATIVE_ORDER = [
+                'stDescription',
+                'charDefinitions',
+                'lorebookDefinitions',
+                'existingFieldDefinitions',
+                'personaDescription',
+                'chatHistory',
+                'outputFormatInstructions',
+                'taskDescription',
+              ] as const;
+
+              const defaultPreset =
+                response.mainContextTemplatePresets?.default ?? { prompts: [] as never[] };
+              const oldPrompts = defaultPreset.prompts ?? [];
+              const byName = new Map(oldPrompts.map((p) => [p.promptName, p]));
+              const reorderedPrompts = ST_NATIVE_ORDER.map((name) => {
+                const existing = byName.get(name);
+                if (existing) {
+                  byName.delete(name);
+                  return existing;
+                }
+                return {
+                  enabled: true,
+                  promptName: name,
+                  role: name === 'taskDescription' ? ('user' as const) : ('system' as const),
+                };
+              });
+              for (const leftover of byName.values()) {
+                reorderedPrompts.push(leftover);
+              }
+              response.mainContextTemplatePresets = {
+                ...response.mainContextTemplatePresets,
+                default: { prompts: reorderedPrompts },
+              };
+
+              if (response.fieldMaxResponseTokens === undefined) {
+                response.fieldMaxResponseTokens = {};
+              }
+              if (response.useWorldInfoActivationScan === undefined) {
+                response.useWorldInfoActivationScan = false;
+              }
+
+              return response;
             },
           },
         ],

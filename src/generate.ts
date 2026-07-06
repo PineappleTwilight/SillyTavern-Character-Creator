@@ -33,16 +33,52 @@ export const CHARACTER_LABELS: Record<CharacterFieldName, string> = {
 };
 
 export const FIELD_GUIDANCE: Record<string, string> = {
-  name: 'A short, evocative character name; e.g. "Kaelen, the Whisperwood Scout".',
-  description: 'A single concise paragraph blending the most critical physical and personality traits into a snapshot.',
+  name: 'A short, evocative character name. Aim for 2-6 words. Strong example: "Kaelen, the Whisperwood Scout". Weak example: "Xy\'zth\'gor" (hard to spell/pronounce).',
+  description:
+    'A single concise paragraph (~200-350 words / ~300 tokens) blending appearance, demeanor, and one memorable quirk. Strong example: "A tall, graceful woman with bronze hair and startling green eyes, carrying herself with the quiet dignity of a noble and the focused intensity of a warrior. A member of a secretive matriarchal order, she is a master of subtle influence and a formidable political strategist. Though her exterior is composed and serene, she is fiercely protective of those she loves."',
   personality:
-    'Direct, declarative statements about motivations, fears, moral alignment, behavioral traits. Avoid contradictions.',
-  scenario: 'Sets the scene: location, timing, what is happening, and the initial {{char}}/{{user}} relationship.',
+    'Direct, declarative statements about motivations, fears, moral alignment, behavioral traits. No contradictions. ~200-400 words / ~350 tokens. Strong example: "A supreme pragmatist who believes a functioning society is more important than a moral one. Masterfully manipulative, he remains several steps ahead of allies and enemies alike, viewing people as pieces on a chessboard to be positioned for the city\'s greater good. He abhors chaos and inefficiency above all else, maintaining a calm, detached, and unnervingly still demeanor that forces others to fill the silence. He never raises his voice, preferring to convey threats with quiet, measured words."',
+  scenario:
+    'Sets the scene in ~150-300 words / ~250 tokens: where, when, what is happening, and the initial {{char}}/{{user}} relationship. Strong example: "The setting is a grimy, unsupervised slum in a sprawling metropolis, a place where illegal commerce thrives. The sky is the color of a dead television channel. {{char}} is a \'console cowboy,\' a disgraced data thief whose nervous system was damaged as punishment for stealing from an employer. {{user}} is a mysterious mercenary who has tracked {{char}} down to offer a cure in exchange for one last, impossible job."',
   first_mes:
-    "The character's opening line. Open with action, include dialogue that reveals personality, end with a hook that prompts a response. Use {{char}} and {{user}}.",
+    "The character's opening line. ~150-400 words / ~350 tokens. Open with a physical action, include dialogue that reveals personality, end with a hook that prompts {{user}}'s response. Use {{char}} and {{user}}. Strong example: '*{{char}} calmly watches the spinning ceiling fan, the smoke from his cigarette curling into the stagnant air. He doesn\'t meet {{user}}\'s eyes, instead focusing on the condensation on his glass.* \"They\'re just questions. It\'s a test, designed to provoke an emotional response. Shall we continue?\"'",
   mes_example:
-    'A 2-3 turn style guide showing how the character speaks and acts. Use {{user}} and {{char}}. Mix dialogue with *asterisk actions*.',
+    'A 2-3 turn style guide (~300-600 words / ~500 tokens) showing how the character speaks and acts. Separate example chunks with a `<START>` line. Use {{user}} and {{char}}. Mix *asterisk actions* with dialogue. Strong example: `<START>\\n{{user}}: "What makes you think your plan will work?"\\n{{char}}: *A slow, confident smirk spreads across her face as she leans back in her chair, boots resting on the scarred metal desk.* "Because I accounted for every variable. Especially the human one—your greed."\\n\\n{{user}}: "I\'m not sure I can do this."\\n{{char}}: *Her expression softens for a brief moment. She places a reassuring hand on {{user}}\'s shoulder, her calloused fingers a surprising comfort.* "Fear is just a signal. It tells you what you need to protect. Now, let\'s protect it together."`',
 };
+
+export const DEFAULT_FIELD_MAX_RESPONSE_TOKENS: Record<string, number> = {
+  name: 128,
+  description: 768,
+  personality: 768,
+  scenario: 512,
+  first_mes: 1024,
+  mes_example: 2048,
+};
+
+/**
+ * Resolve the response-token budget for a generation.
+ * Lookup order (first defined wins):
+ *   1. User per-field override map (overrides[targetField])
+ *   2. Built-in per-field default (DEFAULT_FIELD_MAX_RESPONSE_TOKENS)
+ *   3. Legacy global fallback (maxResponseToken setting, default 1024)
+ * Unknown/draft fields fall through to (3) — preserves pre-existing behavior
+ * unless the user explicitly opted into per-field overrides.
+ */
+export function resolveMaxResponseTokens(
+  targetField: string,
+  globalMaxResponseToken: number,
+  overrides?: Record<string, number>,
+): number {
+  const direct = overrides?.[targetField];
+  if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) {
+    return Math.floor(direct);
+  }
+  const defaultForField = DEFAULT_FIELD_MAX_RESPONSE_TOKENS[targetField];
+  if (typeof defaultForField === 'number' && Number.isFinite(defaultForField) && defaultForField > 0) {
+    return defaultForField;
+  }
+  return globalMaxResponseToken;
+}
 
 export interface CharacterField {
   prompt: string;
@@ -90,6 +126,8 @@ export interface RunCharacterFieldGenerationParams {
   }[];
   includeUserMacro: boolean;
   maxResponseToken: number;
+  fieldMaxResponseTokens?: Record<string, number>;
+  useWorldInfoActivationScan: boolean;
   targetField: CharacterFieldName | string;
   outputFormat: OutputFormat;
 }
@@ -112,6 +150,8 @@ export async function runCharacterFieldGeneration({
   mainContextList,
   includeUserMacro,
   maxResponseToken,
+  fieldMaxResponseTokens,
+  useWorldInfoActivationScan,
   targetField,
   outputFormat,
 }: RunCharacterFieldGenerationParams): Promise<RunCharacterFieldGenerationResult> {
@@ -127,6 +167,12 @@ export async function runCharacterFieldGeneration({
   if (!selectedApi) {
     throw new Error(`Could not determine API for profile "${profile.name}".`);
   }
+
+  const resolvedMaxResponseTokens = resolveMaxResponseTokens(
+    targetField,
+    maxResponseToken,
+    fieldMaxResponseTokens,
+  );
 
   const templateData: Record<string, any> = {};
 
@@ -172,9 +218,55 @@ export async function runCharacterFieldGeneration({
   // Add Definitions of Selected Lorebooks (World Info)
   {
     const lorebooksData: Record<string, WIEntry[]> = {};
+
+    // Resolve the set of activated WI uids, when the user opted into the activation
+    // scan AND the running ST exposes checkWorldInfo. Falls back to "send every
+    // enabled entry of the user-selected worlds" (the legacy behavior) on: scan
+    // disabled, ST API missing, scan threw, or scan returned no activations.
+    let activatedUids: Set<number> | null = null;
+    if (useWorldInfoActivationScan) {
+      try {
+        const checkWorldInfo = (globalContext as any).checkWorldInfo;
+        if (typeof checkWorldInfo === 'function') {
+          const chat = globalContext.chat ?? [];
+          const maxContext = buildPromptOptions.maxContext ?? 16384;
+          const result = await checkWorldInfo(chat, maxContext, true);
+          const activatedEntries =
+            result && (result.entries ?? result.value ?? result.activatedEntries ?? result);
+          if (activatedEntries && typeof activatedEntries === 'object') {
+            const uids: number[] = [];
+            const collect = (e: any) => {
+              if (e && typeof e.uid === 'number') uids.push(e.uid);
+            };
+            if (Array.isArray(activatedEntries)) {
+              activatedEntries.forEach(collect);
+            } else if (typeof activatedEntries === 'object') {
+              if (Array.isArray(activatedEntries.entries)) {
+                activatedEntries.entries.forEach(collect);
+              } else {
+                Object.values(activatedEntries).forEach((e: any) => {
+                  if (Array.isArray(e)) e.forEach(collect);
+                  else collect(e);
+                });
+              }
+            }
+            if (uids.length > 0) activatedUids = new Set(uids);
+          }
+        } else {
+          st_echo(
+            'info',
+            '[Character Creator] World Info activation scan requested but this SillyTavern version does not expose checkWorldInfo(); sending all enabled entries of selected lorebooks instead.',
+          );
+        }
+      } catch (err: any) {
+        console.error('[Character Creator] WI activation scan failed; falling back to all-enabled-entries:', err);
+        activatedUids = null;
+      }
+    }
+
     // Two-pass: include a lorebook iff it has any enabled entry, then strip the
-    // disabled entries themselves. Avoids sending empty worlds while letting
-    // partially-enabled lorebooks contribute their active entries.
+    // disabled entries themselves. When the activation scan produced an
+    // activatedUids set, additionally filter to only entries whose uid activated.
     Object.entries(entriesGroupByWorldName)
       .filter(
         ([worldName, entries]) =>
@@ -183,7 +275,13 @@ export async function runCharacterFieldGeneration({
           entries.some((entry) => !entry.disable),
       )
       .forEach(([worldName, entries]) => {
-        lorebooksData[worldName] = entries.filter((entry) => !entry.disable);
+        let activeEntries = entries.filter((entry) => !entry.disable);
+        if (activatedUids !== null) {
+          activeEntries = activeEntries.filter((entry) => activatedUids!.has(entry.uid));
+        }
+        if (activeEntries.length > 0) {
+          lorebooksData[worldName] = activeEntries;
+        }
       });
 
     templateData['lorebooks'] = lorebooksData;
@@ -309,7 +407,7 @@ export async function runCharacterFieldGeneration({
   const response = (await globalContext.ConnectionManagerRequestService.sendRequest(
     profileId,
     messages,
-    maxResponseToken,
+    resolvedMaxResponseTokens,
   )) as ExtractedData;
   const finishedAt = new Date().toISOString();
 
