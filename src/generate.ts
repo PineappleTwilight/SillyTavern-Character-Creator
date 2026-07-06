@@ -31,6 +31,18 @@ export const CHARACTER_LABELS: Record<CharacterFieldName, string> = {
   mes_example: 'Example Dialogue',
 };
 
+export const FIELD_GUIDANCE: Record<string, string> = {
+  name: 'A short, evocative character name; e.g. "Kaelen, the Whisperwood Scout".',
+  description: 'A single concise paragraph blending the most critical physical and personality traits into a snapshot.',
+  personality:
+    'Direct, declarative statements about motivations, fears, moral alignment, behavioral traits. Avoid contradictions.',
+  scenario: 'Sets the scene: location, timing, what is happening, and the initial {{char}}/{{user}} relationship.',
+  first_mes:
+    "The character's opening line. Open with action, include dialogue that reveals personality, end with a hook that prompts a response. Use {{char}} and {{user}}.",
+  mes_example:
+    'A 2-3 turn style guide showing how the character speaks and acts. Use {{user}} and {{char}}. Mix dialogue with *asterisk actions*.',
+};
+
 export interface CharacterField {
   prompt: string;
   value: string;
@@ -47,6 +59,18 @@ export interface Session {
 
 // @ts-ignore
 const dumbSettings = new ExtensionSettingsManager<ExtensionSettings>('dumb', {}).getSettings();
+
+export interface DebugCapture {
+  targetField: string;
+  outputFormat: OutputFormat;
+  continueFrom?: string;
+  messages: { role: MessageRole; content: string }[];
+  rawResponse: string;
+  parsedContent: string;
+  startedAt: string;
+  finishedAt: string;
+  profileId: string;
+}
 
 export interface RunCharacterFieldGenerationParams {
   profileId: string;
@@ -70,6 +94,11 @@ export interface RunCharacterFieldGenerationParams {
   outputFormat: OutputFormat;
 }
 
+export interface RunCharacterFieldGenerationResult {
+  content: string;
+  debug: DebugCapture | null;
+}
+
 export async function runCharacterFieldGeneration({
   profileId,
   userPrompt,
@@ -85,7 +114,7 @@ export async function runCharacterFieldGeneration({
   maxResponseToken,
   targetField,
   outputFormat,
-}: RunCharacterFieldGenerationParams): Promise<string> {
+}: RunCharacterFieldGenerationParams): Promise<RunCharacterFieldGenerationResult> {
   if (!profileId) {
     throw new Error('No connection profile selected.');
   }
@@ -106,6 +135,8 @@ export async function runCharacterFieldGeneration({
   templateData['persona'] = '{{persona}}'; // ST going to replace this with the actual persona description
 
   templateData['targetField'] = targetField;
+  templateData['fieldGuidance'] =
+    FIELD_GUIDANCE[targetField] ?? 'No specific guidance for this field. Use the surrounding context.';
   templateData['userInstructions'] = Handlebars.compile(userPrompt.trim(), { noEscape: true })(templateData);
   templateData['fieldSpecificInstructions'] = Handlebars.compile(
     session.draftFields[targetField]?.prompt ?? session.fields[targetField as CharacterFieldName]?.prompt,
@@ -211,6 +242,7 @@ export async function runCharacterFieldGeneration({
   }
 
   const messages: Message[] = [];
+  const sentMessages: { role: MessageRole; content: string }[] = [];
   {
     for (const mainContext of mainContextList) {
       // Chat history is exception, since it is not a template
@@ -222,6 +254,7 @@ export async function runCharacterFieldGeneration({
           }
         }
         messages.push(...prompt.result);
+        sentMessages.push(...prompt.result.map((m) => ({ role: m.role as MessageRole, content: m.content as string })));
         continue;
       }
 
@@ -246,23 +279,28 @@ export async function runCharacterFieldGeneration({
       message.content = message.content.replaceAll('[[[crec_veryUniqueCharPlaceHolder]]]', '{{char}}');
       if (message.content) {
         messages.push(message);
+        sentMessages.push({ role: message.role as MessageRole, content: message.content });
       }
     }
 
     // If we're continuing from previous content, add it as an assistant message
     if (continueFrom) {
+      const prefilled = getPrefilled(continueFrom, outputFormat);
       messages.push({
         role: 'assistant',
-        content: getPrefilled(continueFrom, outputFormat),
+        content: prefilled,
       });
+      sentMessages.push({ role: 'assistant', content: prefilled });
     }
   }
 
+  const startedAt = new Date().toISOString();
   const response = (await globalContext.ConnectionManagerRequestService.sendRequest(
     profileId,
     messages,
     maxResponseToken,
   )) as ExtractedData;
+  const finishedAt = new Date().toISOString();
 
   // For "continue" requests, the model only returns the new part.
   // We must combine the start of the structure with the model's completion to parse it correctly.
@@ -285,5 +323,20 @@ export async function runCharacterFieldGeneration({
     finalContent = '';
   }
 
-  return finalContent;
+  const settings = settingsManager.getSettings();
+  const debug: DebugCapture | null = settings.showDebugView
+    ? {
+        targetField,
+        outputFormat,
+        continueFrom,
+        messages: sentMessages,
+        rawResponse: response.content,
+        parsedContent: finalContent,
+        startedAt,
+        finishedAt,
+        profileId,
+      }
+    : null;
+
+  return { content: finalContent, debug };
 }

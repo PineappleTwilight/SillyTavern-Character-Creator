@@ -12,15 +12,12 @@ import {
   DEFAULT_TASK_DESCRIPTION,
   DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS,
   DEFAULT_PERSONA_DESCRIPTION,
-  DEFAULT_REVISE_JSON_PROMPT,
-  DEFAULT_REVISE_XML_PROMPT,
-  DEFAULT_REVISE_TASK_DESCRIPTION,
 } from './constants.js';
 import { globalContext } from './generate.js';
 
 export const extensionName = 'SillyTavern-Character-Creator';
-export const VERSION = '0.3.0';
-export const FORMAT_VERSION = 'F_1.10';
+export const VERSION = '0.4.0';
+export const FORMAT_VERSION = 'F_2.0';
 
 export const KEYS = {
   EXTENSION: 'charCreator',
@@ -67,7 +64,6 @@ export interface MainContextTemplatePreset {
 }
 
 export type OutputFormat = 'xml' | 'json' | 'none';
-export type PromptEngineeringMode = 'native' | 'json' | 'xml';
 
 export interface ExtensionSettings {
   version: string;
@@ -78,7 +74,6 @@ export interface ExtensionSettings {
   maxResponseToken: number;
   outputFormat: OutputFormat;
   contextToSend: ContextToSend;
-  defaultPromptEngineeringMode: PromptEngineeringMode;
 
   // Consolidated system prompts
   prompts: {
@@ -93,9 +88,6 @@ export interface ExtensionSettings {
     taskDescription: PromptSetting;
     outputFormatInstructions: PromptSetting;
     personaDescription: PromptSetting;
-    reviseJsonPrompt: PromptSetting;
-    reviseXmlPrompt: PromptSetting;
-    reviseTaskDescription: PromptSetting;
     [key: string]: PromptSetting;
   };
 
@@ -105,6 +97,8 @@ export interface ExtensionSettings {
 
   mainContextTemplatePreset: string;
   mainContextTemplatePresets: Record<string, MainContextTemplatePreset>;
+
+  showDebugView: boolean;
 
   // World Info
   showSaveAsWorldInfoEntry: {
@@ -123,10 +117,7 @@ export type SystemPromptKey =
   | 'existingFieldDefinitions'
   | 'taskDescription'
   | 'outputFormatInstructions'
-  | 'personaDescription'
-  | 'reviseJsonPrompt'
-  | 'reviseXmlPrompt'
-  | 'reviseTaskDescription';
+  | 'personaDescription';
 
 export const SYSTEM_PROMPT_KEYS: Array<SystemPromptKey> = [
   'stDescription',
@@ -140,9 +131,6 @@ export const SYSTEM_PROMPT_KEYS: Array<SystemPromptKey> = [
   'taskDescription',
   'outputFormatInstructions',
   'personaDescription',
-  'reviseJsonPrompt',
-  'reviseXmlPrompt',
-  'reviseTaskDescription',
 ];
 
 // Map keys to their default values
@@ -158,9 +146,6 @@ export const DEFAULT_PROMPT_CONTENTS: Record<SystemPromptKey, string> = {
   taskDescription: DEFAULT_TASK_DESCRIPTION,
   outputFormatInstructions: DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS,
   personaDescription: DEFAULT_PERSONA_DESCRIPTION,
-  reviseJsonPrompt: DEFAULT_REVISE_JSON_PROMPT,
-  reviseXmlPrompt: DEFAULT_REVISE_XML_PROMPT,
-  reviseTaskDescription: DEFAULT_REVISE_TASK_DESCRIPTION,
 };
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
@@ -188,7 +173,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
     persona: true,
     dontSendOtherGreetings: false,
   },
-  defaultPromptEngineeringMode: 'native',
 
   // Updated prompts structure
   prompts: {
@@ -246,21 +230,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       content: DEFAULT_PROMPT_CONTENTS.personaDescription,
       isDefault: true,
       label: 'User Persona Description Template',
-    },
-    reviseJsonPrompt: {
-      content: DEFAULT_PROMPT_CONTENTS.reviseJsonPrompt,
-      isDefault: true,
-      label: 'Revise Session (JSON Mode)',
-    },
-    reviseXmlPrompt: {
-      content: DEFAULT_PROMPT_CONTENTS.reviseXmlPrompt,
-      isDefault: true,
-      label: 'Revise Session (XML Mode)',
-    },
-    reviseTaskDescription: {
-      content: DEFAULT_PROMPT_CONTENTS.reviseTaskDescription,
-      isDefault: true,
-      label: 'Revise Session Task Description',
     },
   },
 
@@ -320,6 +289,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
       ],
     },
   },
+
+  showDebugView: false,
 
   // World Info
   showSaveAsWorldInfoEntry: {
@@ -626,25 +597,7 @@ export async function initializeSettings(): Promise<void> {
             action(previous: ExtensionSettings): ExtensionSettings {
               const response = {
                 ...previous,
-                defaultPromptEngineeringMode: 'native',
               } as ExtensionSettings;
-
-              if (!response.prompts) response.prompts = {} as any;
-              response.prompts.reviseJsonPrompt = {
-                content: DEFAULT_PROMPT_CONTENTS.reviseJsonPrompt,
-                isDefault: true,
-                label: 'Revise Session (JSON Mode)',
-              };
-              response.prompts.reviseXmlPrompt = {
-                content: DEFAULT_PROMPT_CONTENTS.reviseXmlPrompt,
-                isDefault: true,
-                label: 'Revise Session (XML Mode)',
-              };
-              response.prompts.reviseTaskDescription = {
-                content: DEFAULT_PROMPT_CONTENTS.reviseTaskDescription,
-                isDefault: true,
-                label: 'Revise Session Task Description',
-              };
 
               // Update templates if they were default
               if (previous.prompts.charDefinitions.isDefault) {
@@ -691,6 +644,23 @@ export async function initializeSettings(): Promise<void> {
               }
 
               return response;
+            },
+          },
+          {
+            from: 'F_1.10',
+            to: 'F_2.0',
+            action(previous: any): ExtensionSettings {
+              const response: any = { ...previous };
+              const responsePrompts: any = response.prompts ?? {};
+
+              delete response.defaultPromptEngineeringMode;
+              delete responsePrompts.reviseJsonPrompt;
+              delete responsePrompts.reviseXmlPrompt;
+              delete responsePrompts.reviseTaskDescription;
+              response.prompts = responsePrompts;
+              response.showDebugView = false;
+
+              return response as ExtensionSettings;
             },
           },
         ],

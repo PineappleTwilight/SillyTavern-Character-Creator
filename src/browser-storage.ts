@@ -1,8 +1,6 @@
 import type { Session } from './generate.js';
-import type { ReviseSession } from './revise-types.js';
 
 export const CHARACTER_SESSION_KEY = 'charCreator';
-export const REVISE_SESSIONS_KEY = 'charCreator_reviseSessions';
 
 type LocalForageLike = {
   getItem<T>(key: string): Promise<T | null>;
@@ -88,14 +86,3 @@ export const saveCharacterSession = (
   session: Session,
   storage: LocalForageLike = getStorage(),
 ): Promise<StorageSaveResult> => saveValue(CHARACTER_SESSION_KEY, session, storage);
-
-export const loadReviseSessions = (
-  storage: LocalForageLike = getStorage(),
-  legacyStorage: LegacyStorageLike = localStorage,
-): Promise<StorageLoadResult<ReviseSession[]>> =>
-  loadWithLegacyMigration<ReviseSession[]>(REVISE_SESSIONS_KEY, storage, legacyStorage);
-
-export const saveReviseSessions = (
-  sessions: ReviseSession[],
-  storage: LocalForageLike = getStorage(),
-): Promise<StorageSaveResult> => saveValue(REVISE_SESSIONS_KEY, sessions, storage);

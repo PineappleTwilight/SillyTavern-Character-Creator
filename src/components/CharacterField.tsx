@@ -1,5 +1,5 @@
-import { FC } from 'react';
-import { STButton, STTextarea } from 'sillytavern-utils-lib/components/react';
+import { FC, useMemo } from 'react';
+import { STButton } from 'sillytavern-utils-lib/components/react';
 
 export interface CharacterFieldProps {
   fieldId: string;
@@ -11,6 +11,7 @@ export interface CharacterFieldProps {
   promptEnabled?: boolean;
   isDraft?: boolean;
   isGenerating?: boolean;
+  isDebug?: boolean;
   onValueChange: (fieldId: string, newValue: string) => void;
   onPromptChange: (fieldId: string, newPrompt: string) => void;
   onGenerate: (fieldId: string) => void;
@@ -18,8 +19,23 @@ export interface CharacterFieldProps {
   onClear: (fieldId: string) => void;
   onCompare?: (fieldId: string) => void;
   onDelete?: (fieldId: string) => void;
-  onOpenReviseSessions?: (fieldId: string) => void;
+  onShowDebug?: (fieldId: string) => void;
 }
+
+const copyToClipboard = (text: string) => {
+  navigator.clipboard?.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+    } catch {
+      /* ignore */
+    }
+    document.body.removeChild(ta);
+  });
+};
 
 export const CharacterField: FC<CharacterFieldProps> = ({
   fieldId,
@@ -31,6 +47,7 @@ export const CharacterField: FC<CharacterFieldProps> = ({
   promptEnabled = true,
   isDraft = false,
   isGenerating = false,
+  isDebug = false,
   onValueChange,
   onPromptChange,
   onGenerate,
@@ -38,36 +55,58 @@ export const CharacterField: FC<CharacterFieldProps> = ({
   onClear,
   onCompare,
   onDelete,
-  onOpenReviseSessions,
+  onShowDebug,
 }) => {
+  const charCount = useMemo(() => value.length, [value]);
+  const canGenerate = !isGenerating;
+
   return (
     <div className={`character-field ${isDraft ? 'draft-field' : 'core-field'}`}>
-      <label>{label}</label>
+      <div className="character-field-label-row">
+        <label>{label}</label>
+        {isGenerating ? (
+          <span className="character-field-status">
+            <i className="fa-solid fa-spinner fa-spin" /> generating…
+          </span>
+        ) : (
+          <span className="character-field-char-count" title="Character count">
+            {charCount} ch
+          </span>
+        )}
+      </div>
       <div className={`field-container ${large ? 'large-field' : ''}`}>
-        <STTextarea value={value} onChange={(e) => onValueChange(fieldId, e.target.value)} rows={rows} />
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <STButton onClick={() => onGenerate(fieldId)} disabled={isGenerating} title="Generate field content">
+        <textarea
+          className="text_pole crec-field-textarea"
+          value={value}
+          onChange={(e) => onValueChange(fieldId, e.target.value)}
+          rows={rows}
+          placeholder={`Enter ${label.toLowerCase()}…`}
+        />
+        <div className="field-actions">
+          <STButton onClick={() => onGenerate(fieldId)} disabled={!canGenerate} title="Generate field content">
             {isGenerating ? (
               <i className="fa-solid fa-spinner fa-spin"></i>
             ) : (
               <i className="fa-solid fa-wand-magic-sparkles"></i>
             )}
           </STButton>
-          <STButton onClick={() => onContinue(fieldId)} disabled={isGenerating} title="Continue from current content">
+          <STButton onClick={() => onContinue(fieldId)} disabled={!canGenerate} title="Continue from current content">
             <i className="fa-solid fa-arrow-right"></i>
           </STButton>
-          <STButton onClick={() => onClear(fieldId)} title="Clear field content">
+          <STButton onClick={() => copyToClipboard(value)} disabled={!value} title="Copy content">
+            <i className="fa-solid fa-copy"></i>
+          </STButton>
+          <STButton onClick={() => onClear(fieldId)} disabled={!value} title="Clear field content">
             <i className="fa-solid fa-eraser"></i>
           </STButton>
-          {onOpenReviseSessions &&
-            !isDraft && ( // Disabling for draft fields initially for simplicity
-              <STButton onClick={() => onOpenReviseSessions(fieldId)} title="Revise with AI chat">
-                <i className="fa-solid fa-comments"></i>
-              </STButton>
-            )}
           {!isDraft && onCompare && (
             <STButton onClick={() => onCompare(fieldId)} title="Compare with loaded character">
               <i className="fa-solid fa-code-compare"></i>
+            </STButton>
+          )}
+          {isDebug && onShowDebug && (
+            <STButton onClick={() => onShowDebug(fieldId)} title="View debug (last prompt + response)">
+              <i className="fa-solid fa-bug"></i>
             </STButton>
           )}
           {isDraft && onDelete && (
@@ -79,11 +118,13 @@ export const CharacterField: FC<CharacterFieldProps> = ({
       </div>
       {promptEnabled && (
         <div className="field-prompt-container">
-          <STTextarea
+          <div className="field-prompt-label">Field-specific prompt</div>
+          <textarea
+            className="text_pole crec-field-textarea crec-field-prompt-textarea"
             value={prompt}
             onChange={(e) => onPromptChange(fieldId, e.target.value)}
-            placeholder={`Enter additional prompt for ${label.toLowerCase()}...`}
-            rows={3}
+            placeholder={`Enter additional prompt for ${label.toLowerCase()}…`}
+            rows={2}
           />
         </div>
       )}

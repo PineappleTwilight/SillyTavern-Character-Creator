@@ -365,6 +365,19 @@ export const CharacterCreatorSettings: FC = () => {
         Show "Save as World Info Entry" option in popup
       </label>
 
+      <label className="checkbox_label" style={{ marginTop: '10px' }}>
+        <input
+          type="checkbox"
+          checked={settings.showDebugView}
+          onChange={(e) =>
+            updateAndRefresh((s) => {
+              s.showDebugView = e.target.checked;
+            })
+          }
+        />
+        Enable per-field debug view (capture last prompt + raw response)
+      </label>
+
       <hr style={{ margin: '15px 0' }} />
 
       <div style={{ textAlign: 'center', marginTop: '15px' }}>

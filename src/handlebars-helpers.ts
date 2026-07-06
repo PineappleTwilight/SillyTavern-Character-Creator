@@ -33,7 +33,9 @@ registerHelper('is_not_empty', function (this: any, value: any, options: any) {
 
 registerHelper('indent', (level: any, text: any) => {
   const spaces = ' '.repeat(Math.max(0, Number(level) || 0));
-  return String(text ?? '').split('\n').join(`\n${spaces}`);
+  return String(text ?? '')
+    .split('\n')
+    .join(`\n${spaces}`);
 });
 
 registerHelper('json', (value: any) => JSON.stringify(value));

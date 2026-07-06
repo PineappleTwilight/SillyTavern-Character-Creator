@@ -17,14 +17,13 @@ import { WIEntry } from 'sillytavern-utils-lib/types/world-info';
 import * as Handlebars from 'handlebars';
 import '../handlebars-helpers.js';
 
-import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS } from '../generate.js';
+import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS, DebugCapture } from '../generate.js';
 import { ExtensionSettings, settingsManager, convertToVariableName, VERSION } from '../settings.js';
 import { useForceUpdate } from '../hooks/useForceUpdate.js';
 import { CharacterField } from './CharacterField.js';
 import { AlternateGreetings, Greeting } from './AlternateGreetings.js';
 import { CompareFieldPopup } from './CompareFieldPopup.js';
-import { CharacterState, ReviseSessionType } from '../revise-types.js';
-import { ReviseSessionManager } from './ReviseSessionManager.js';
+import { DebugView } from './DebugView.js';
 import { buildWorldInfoCharacter } from '../world-info-export.js';
 import { buildWorldInfoDropdownItems } from '../world-info-selection.js';
 import { getWorldInfoEntries } from '../world-info-entries.js';
@@ -32,7 +31,6 @@ import { loadCharacterSession, saveCharacterSession } from '../browser-storage.j
 
 const globalContext = SillyTavern.getContext();
 
-// A default, empty session structure
 const createDefaultSession = (): Session => ({
   selectedCharacterIndexes: this_chid ? [String(this_chid)] : [],
   selectedWorldNames: [],
@@ -56,6 +54,8 @@ const fieldConfigs = {
   mes_example: { label: CHARACTER_LABELS.mes_example, rows: 6, large: true, promptEnabled: true },
 };
 
+type DebugMap = Record<string, DebugCapture>;
+
 export const MainPopup: FC = () => {
   // --- State Management ---
   const forceUpdate = useForceUpdate();
@@ -69,13 +69,15 @@ export const MainPopup: FC = () => {
   const [allWorldNames, setAllWorldNames] = useState<string[]>([]);
   const [loadedCharacter, setLoadedCharacter] = useState<Character | null>(null);
   const [compareData, setCompareData] = useState<{ original: string; current: string; fieldName: string } | null>(null);
-
-  // --- Revise Session State ---
-  const [reviseSessionManagerOpen, setReviseSessionManagerOpen] = useState(false);
-  const [reviseSessionTarget, setReviseSessionTarget] = useState<{
-    type: ReviseSessionType;
-    fieldId?: string;
-  } | null>(null);
+  const [debugCapture, setDebugCapture] = useState<DebugMap>({});
+  const [openDebugFor, setOpenDebugFor] = useState<string | null>(null);
+  const [generatingAll, setGeneratingAll] = useState(false);
+  const [collapsed, setCollapsed] = useState({
+    profile: false,
+    context: true,
+    options: true,
+    instructions: true,
+  });
 
   // --- Effects for Data Loading and Session Management ---
   useEffect(() => {
@@ -201,138 +203,155 @@ export const MainPopup: FC = () => {
     setActiveTab('draft');
   }, [session.draftFields]);
 
-  // --- Revise Session Handlers ---
-  const handleOpenReviseSessions = (fieldId: string) => {
-    setReviseSessionTarget({ type: 'field', fieldId });
-    setReviseSessionManagerOpen(true);
-  };
-  const handleOpenGlobalReviseSessions = () => {
-    setReviseSessionTarget({ type: 'global' });
-    setReviseSessionManagerOpen(true);
-  };
-  const handleApplyReviseSessionChanges = (newState: CharacterState) => {
-    setSession((prev) => ({
-      ...prev,
-      fields: { ...prev.fields, ...newState.fields },
-      draftFields: { ...prev.draftFields, ...newState.draftFields },
-    }));
-    st_echo('success', 'Changes from revise session applied.');
-    setReviseSessionManagerOpen(false);
-  };
-
   // --- Core Generation Logic ---
+  const buildOptionsForRequest = useCallback((): BuildPromptOptions => {
+    const buildPromptOptions: BuildPromptOptions = {
+      presetName: settings.profileId
+        ? globalContext.extensionSettings.connectionManager?.profiles?.find((p) => p.id === settings.profileId)?.preset
+        : undefined,
+      contextName: settings.profileId
+        ? globalContext.extensionSettings.connectionManager?.profiles?.find((p) => p.id === settings.profileId)?.context
+        : undefined,
+      instructName: settings.profileId
+        ? globalContext.extensionSettings.connectionManager?.profiles?.find((p) => p.id === settings.profileId)
+            ?.instruct
+        : undefined,
+      targetCharacterId: this_chid,
+      ignoreCharacterFields: true,
+      ignoreWorldInfo: true,
+      ignoreAuthorNote: true,
+      maxContext:
+        settings.maxContextType === 'custom'
+          ? settings.maxContextValue
+          : settings.maxContextType === 'profile'
+            ? 'preset'
+            : 'active',
+      includeNames: !!selected_group,
+    };
+
+    const msgContext = settings.contextToSend.messages;
+    switch (msgContext.type) {
+      case 'none':
+        buildPromptOptions.messageIndexesBetween = { start: -1, end: -1 };
+        break;
+      case 'first':
+        buildPromptOptions.messageIndexesBetween = { start: 0, end: msgContext.first ?? 10 };
+        break;
+      case 'last':
+        const chatLength = globalContext.chat?.length ?? 0;
+        const lastCount = msgContext.last ?? 10;
+        buildPromptOptions.messageIndexesBetween = {
+          end: Math.max(0, chatLength - 1),
+          start: Math.max(0, chatLength - lastCount),
+        };
+        break;
+      case 'range':
+        buildPromptOptions.messageIndexesBetween = {
+          start: msgContext.range?.start ?? 0,
+          end: msgContext.range?.end ?? 10,
+        };
+        break;
+      case 'all':
+      default:
+        break;
+    }
+    if (this_chid === undefined && !selected_group) {
+      buildPromptOptions.messageIndexesBetween = { start: -1, end: -1 };
+    }
+    return buildPromptOptions;
+  }, [settings]);
+
+  const loadWorldInfoEntries = useCallback(async () => {
+    const entriesGroupByWorldName: Record<string, WIEntry[]> = {};
+    await Promise.all(
+      world_names
+        .filter((name: string) => !entriesGroupByWorldName[name])
+        .map(async (name: string) => {
+          const worldInfo = await globalContext.loadWorldInfo(name);
+          if (worldInfo) {
+            entriesGroupByWorldName[name] = getWorldInfoEntries(worldInfo, { includeDisabled: true });
+          }
+        }),
+    );
+    return entriesGroupByWorldName;
+  }, []);
+
+  const buildPromptSettings = useCallback(() => {
+    const promptSettings = structuredClone(settings.prompts);
+    if (!settings.contextToSend.stDescription) {
+      // @ts-ignore
+      delete promptSettings.stDescription;
+    }
+    if (!settings.contextToSend.charCard || session.selectedCharacterIndexes.length === 0) {
+      // @ts-ignore
+      delete promptSettings.charDefinitions;
+    }
+    if (!settings.contextToSend.worldInfo || session.selectedWorldNames.length === 0) {
+      // @ts-ignore
+      delete promptSettings.lorebookDefinitions;
+    }
+    if (!settings.contextToSend.existingFields) {
+      // @ts-ignore
+      delete promptSettings.existingFieldDefinitions;
+    }
+    if (!settings.contextToSend.persona) {
+      // @ts-ignore
+      delete promptSettings.personaDescription;
+    }
+    // @ts-ignore - since this is only for saving as world info entry
+    delete promptSettings.worldInfoCharDefinition;
+    return promptSettings;
+  }, [settings, session.selectedCharacterIndexes, session.selectedWorldNames]);
+
+  const runGeneration = useCallback(
+    async (targetField: string, continueFrom?: string): Promise<string> => {
+      if (!settings.profileId) {
+        throw new Error('No connection profile selected.');
+      }
+      const profile = globalContext.extensionSettings.connectionManager?.profiles?.find(
+        (p) => p.id === settings.profileId,
+      );
+      if (!profile) {
+        throw new Error('Connection profile not found.');
+      }
+
+      const buildPromptOptions = buildOptionsForRequest();
+      const entriesGroupByWorldName = await loadWorldInfoEntries();
+      const promptSettings = buildPromptSettings();
+
+      const result = await runCharacterFieldGeneration({
+        profileId: settings.profileId,
+        userPrompt: settings.promptPresets[settings.promptPreset].content,
+        buildPromptOptions,
+        continueFrom,
+        session,
+        allCharacters,
+        entriesGroupByWorldName,
+        promptSettings,
+        formatDescription: { content: settings.prompts[`${settings.outputFormat}Format`].content },
+        mainContextList: settings.mainContextTemplatePresets[settings.mainContextTemplatePreset].prompts.filter(
+          (p) => p.enabled,
+        ),
+        includeUserMacro: settings.contextToSend.persona,
+        maxResponseToken: settings.maxResponseToken,
+        targetField: targetField,
+        outputFormat: settings.outputFormat,
+      });
+
+      if (result.debug) {
+        setDebugCapture((prev) => ({ ...prev, [targetField]: result.debug! }));
+      }
+
+      return result.content;
+    },
+    [session, settings, allCharacters, buildOptionsForRequest, loadWorldInfoEntries, buildPromptSettings],
+  );
+
   const handleGenerate = useCallback(
     async (targetField: string, continueFrom?: string) => {
-      if (!settings.profileId) return st_echo('warning', 'Please select a connection profile.');
       setIsGenerating((prev) => [...prev, targetField]);
       try {
-        const profile = globalContext.extensionSettings.connectionManager?.profiles?.find(
-          (p) => p.id === settings.profileId,
-        );
-        if (!profile) throw new Error('Connection profile not found.');
-
-        // This logic is complex and directly adapted from your vanilla implementation
-        const buildPromptOptions: BuildPromptOptions = {
-          presetName: profile?.preset,
-          contextName: profile?.context,
-          instructName: profile?.instruct,
-          targetCharacterId: this_chid,
-          ignoreCharacterFields: true,
-          ignoreWorldInfo: true,
-          ignoreAuthorNote: true,
-          maxContext:
-            settings.maxContextType === 'custom'
-              ? settings.maxContextValue
-              : settings.maxContextType === 'profile'
-                ? 'preset'
-                : 'active',
-          includeNames: !!selected_group,
-        };
-
-        // Add message range options
-        const msgContext = settings.contextToSend.messages;
-        switch (msgContext.type) {
-          case 'none':
-            buildPromptOptions.messageIndexesBetween = { start: -1, end: -1 };
-            break;
-          case 'first':
-            buildPromptOptions.messageIndexesBetween = { start: 0, end: msgContext.first ?? 10 };
-            break;
-          case 'last':
-            const chatLength = globalContext.chat?.length ?? 0;
-            const lastCount = msgContext.last ?? 10;
-            buildPromptOptions.messageIndexesBetween = {
-              end: Math.max(0, chatLength - 1),
-              start: Math.max(0, chatLength - lastCount),
-            };
-            break;
-          case 'range':
-            buildPromptOptions.messageIndexesBetween = {
-              start: msgContext.range?.start ?? 0,
-              end: msgContext.range?.end ?? 10,
-            };
-            break;
-          case 'all':
-          default:
-            break;
-        }
-        if (this_chid === undefined && !selected_group) {
-          buildPromptOptions.messageIndexesBetween = { start: -1, end: -1 };
-        }
-        const entriesGroupByWorldName: Record<string, WIEntry[]> = {};
-        await Promise.all(
-          world_names
-            .filter((name: string) => !entriesGroupByWorldName[name])
-            .map(async (name: string) => {
-              const worldInfo = await globalContext.loadWorldInfo(name);
-              if (worldInfo) {
-                entriesGroupByWorldName[name] = getWorldInfoEntries(worldInfo, { includeDisabled: true });
-              }
-            }),
-        );
-
-        const promptSettings = structuredClone(settings.prompts);
-        if (!settings.contextToSend.stDescription) {
-          // @ts-ignore
-          delete promptSettings.stDescription;
-        }
-        if (!settings.contextToSend.charCard || session.selectedCharacterIndexes.length === 0) {
-          // @ts-ignore
-          delete promptSettings.charDefinitions;
-        }
-        if (!settings.contextToSend.worldInfo || session.selectedWorldNames.length === 0) {
-          // @ts-ignore
-          delete promptSettings.lorebookDefinitions;
-        }
-        if (!settings.contextToSend.existingFields) {
-          // @ts-ignore
-          delete promptSettings.existingFieldDefinitions;
-        }
-        if (!settings.contextToSend.persona) {
-          // @ts-ignore
-          delete promptSettings.personaDescription;
-        }
-        // @ts-ignore - since this is only for saving as world info entry
-        delete promptSettings.worldInfoCharDefinition;
-
-        const generatedContent = await runCharacterFieldGeneration({
-          profileId: settings.profileId,
-          userPrompt: settings.promptPresets[settings.promptPreset].content,
-          buildPromptOptions,
-          continueFrom,
-          session,
-          allCharacters,
-          entriesGroupByWorldName,
-          promptSettings,
-          formatDescription: { content: settings.prompts[`${settings.outputFormat}Format`].content },
-          mainContextList: settings.mainContextTemplatePresets[settings.mainContextTemplatePreset].prompts.filter(
-            (p) => p.enabled,
-          ),
-          includeUserMacro: settings.contextToSend.persona,
-          maxResponseToken: settings.maxResponseToken,
-          targetField: targetField,
-          outputFormat: settings.outputFormat,
-        });
+        const generatedContent = await runGeneration(targetField, continueFrom);
 
         const isGreeting = targetField.startsWith('alternate_greetings_');
         const isDraft = !isGreeting && !CHARACTER_FIELDS.includes(targetField as any);
@@ -351,8 +370,41 @@ export const MainPopup: FC = () => {
         setIsGenerating((prev) => prev.filter((id) => id !== targetField));
       }
     },
-    [session, settings, allCharacters, greetings, handleFieldChange, handleGreetingsChange],
+    [runGeneration, greetings, handleFieldChange, handleGreetingsChange],
   );
+
+  const handleGenerateAll = useCallback(async () => {
+    if (!settings.profileId) {
+      st_echo('warning', 'Please select a connection profile.');
+      return;
+    }
+    const fieldsToGenerate = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example'].filter(
+      (f) => !isGenerating.includes(f),
+    );
+    if (fieldsToGenerate.length === 0) return;
+    setGeneratingAll(true);
+    setIsGenerating((prev) => [...prev, ...fieldsToGenerate]);
+    try {
+      const generated: Record<string, string> = {};
+      for (const fieldId of fieldsToGenerate) {
+        const content = await runGeneration(fieldId);
+        generated[fieldId] = content;
+        setSession((prev) => {
+          const newFields = { ...prev.fields };
+          if (newFields[fieldId]) newFields[fieldId] = { ...newFields[fieldId], value: content };
+          return { ...prev, fields: newFields };
+        });
+        setIsGenerating((prev) => prev.filter((id) => id !== fieldId));
+      }
+      st_echo('success', `Generated ${Object.keys(generated).length} fields.`);
+    } catch (e: any) {
+      console.error(e);
+      st_echo('error', `Generate all failed: ${e.message}`);
+    } finally {
+      setGeneratingAll(false);
+      setIsGenerating([]);
+    }
+  }, [settings.profileId, runGeneration, isGenerating]);
 
   // --- Character Actions ---
   const handleReset = useCallback(async () => {
@@ -360,6 +412,7 @@ export const MainPopup: FC = () => {
     if (confirm) {
       setSession(createDefaultSession());
       setLoadedCharacter(null);
+      setDebugCapture({});
     }
   }, []);
 
@@ -411,17 +464,13 @@ export const MainPopup: FC = () => {
       st_echo('warning', 'No character chat is currently open.');
       return;
     }
-
     await handleLoadCharacter(String(this_chid));
   }, [handleLoadCharacter]);
 
   const getGreetingsArray = () => greetings.map((g) => g.value).filter((v) => v.trim() !== '');
 
-  const handleSaveAsNew = async () => {
-    if (!session.fields.name.value) return st_echo('warning', 'Please provide a character name.');
-    const confirm = await globalContext.Popup.show.confirm('Save as New Character', 'Are you sure?');
-    if (!confirm) return;
-    const data: FullExportData = {
+  const buildFullExportData = useCallback((): FullExportData => {
+    return {
       name: session.fields.name.value,
       description: session.fields.description.value,
       personality: session.fields.personality.value,
@@ -444,8 +493,15 @@ export const MainPopup: FC = () => {
       spec: 'chara_card_v3',
       spec_version: '3.0',
     };
+  }, [session.fields, greetings]);
+
+  const handleSaveAsNew = async () => {
+    if (!session.fields.name.value) return st_echo('warning', 'Please provide a character name.');
+    const confirm = await globalContext.Popup.show.confirm('Save as New Character', 'Are you sure?');
+    if (!confirm) return;
     try {
-      await createCharacter(data, true);
+      await createCharacter(buildFullExportData(), true);
+      st_echo('success', 'Character created.');
     } catch (e: any) {
       st_echo('error', `Failed to create character: ${e.message}`);
     }
@@ -482,6 +538,53 @@ export const MainPopup: FC = () => {
     } catch (e: any) {
       st_echo('error', `Failed to override character: ${e.message}`);
     }
+  };
+
+  const handleExportJson = () => {
+    if (!session.fields.name.value) return st_echo('warning', 'Please provide a character name before exporting.');
+    const data = buildFullExportData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${session.fields.name.value || 'character'}-card.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const handleImportJson = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const isDirty = CHARACTER_FIELDS.some((f) => session.fields[f].value.trim() !== '');
+        if (isDirty) {
+          const confirm = await globalContext.Popup.show.confirm('Import Character', 'Overwrite current fields?');
+          if (!confirm) return;
+        }
+        const newFields = { ...session.fields };
+        CHARACTER_FIELDS.forEach((f) => {
+          newFields[f] = {
+            value: data[f] ?? data.data?.[f] ?? '',
+            prompt: '',
+            label: CHARACTER_LABELS[f],
+          };
+        });
+        const importedGreetings: Greeting[] = (data.data?.alternate_greetings ?? data.alternate_greetings ?? []).map(
+          (v: string) => ({ value: v, prompt: '' }),
+        );
+        setSession((prev) => ({ ...prev, fields: newFields }));
+        handleGreetingsChange(importedGreetings);
+        st_echo('success', `Imported "${data.name ?? 'character'}".`);
+      } catch (e: any) {
+        st_echo('error', `Import failed: ${e.message}`);
+      }
+    };
+    input.click();
   };
 
   const handleExportDrafts = () => {
@@ -545,63 +648,156 @@ export const MainPopup: FC = () => {
     [settings.mainContextTemplatePresets],
   );
 
-  if (isLoading) return <div>Loading...</div>;
+  const toggleSection = (key: keyof typeof collapsed) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const debugEnabled = settings.showDebugView;
+  const openDebugCapture = openDebugFor ? debugCapture[openDebugFor] : null;
+
+  if (isLoading) return <div className="crec-loading">Loading…</div>;
 
   return (
     <div id="charCreatorPopup">
-      <h2>Character Creator</h2>
-      <div className="container">
-        {/* Left Column */}
-        <div className="column">
-          <div className="card">
-            <h3>Connection Profile</h3>
-            <STConnectionProfileSelect
-              initialSelectedProfileId={settings.profileId}
-              onChange={(p) => updateSetting('profileId', p?.id ?? '')}
+      <div className="crec-popup-head">
+        <h2>Character Creator</h2>
+        <div className="crec-toolbar">
+          <STButton onClick={handleGenerateAll} disabled={generatingAll} title="Generate every core field in sequence">
+            {generatingAll ? (
+              <>
+                <i className="fa-solid fa-spinner fa-spin" /> Generating…
+              </>
+            ) : (
+              <>
+                <i className="fa-solid fa-bolt" /> Generate All
+              </>
+            )}
+          </STButton>
+          <STButton onClick={handleSaveAsNew}>Save as New</STButton>
+          <STButton onClick={handleOverride} disabled={!loadedCharacter}>
+            Override Char
+          </STButton>
+          <STButton onClick={handleExportJson}>Export JSON</STButton>
+          <STButton onClick={handleImportJson}>Import JSON</STButton>
+          {settings.showSaveAsWorldInfoEntry.show && (
+            <STFancyDropdown
+              items={worldInfoDropdownItems}
+              placeholder="Save as WI Entry"
+              closeOnSelect
+              value={[]}
+              onChange={(v) => {}}
+              onBeforeSelection={async (_current, proposed) => {
+                if (!session.fields.name.value) {
+                  st_echo('warning', 'Please enter a name first.');
+                  return false;
+                }
+                const worldName = proposed[0];
+                const template = Handlebars.compile(settings.prompts.worldInfoCharDefinition.content);
+                const content = template({
+                  character: buildWorldInfoCharacter(session.fields, greetings),
+                });
+                const entry: WIEntry = {
+                  uid: -1,
+                  key: [session.fields.name.value],
+                  content,
+                  comment: session.fields.name.value,
+                  disable: false,
+                  keysecondary: [],
+                };
+                try {
+                  await applyWorldInfoEntry({ entry, selectedWorldName: worldName, operation: 'add' });
+                  st_echo('success', `Entry added to ${worldName}.`);
+                } catch (err: any) {
+                  st_echo('error', `Failed to add WI Entry: ${err.message}`);
+                }
+                return false;
+              }}
+            />
+          )}
+          <STButton onClick={handleReset} title="Clear all fields">
+            <i className="fa-solid fa-rotate-left" /> Reset
+          </STButton>
+          <STButton
+            onClick={handleLoadCurrentCharacter}
+            title="Load the character from the currently open chat"
+            disabled={!!selected_group || this_chid === undefined}
+          >
+            Current Char
+          </STButton>
+          <div style={{ width: '220px' }} title="Load Character Data">
+            <STFancyDropdown
+              items={characterDropdownItems}
+              value={loadedCharacter ? [String(allCharacters.indexOf(loadedCharacter))] : []}
+              onChange={(v) => handleLoadCharacter(v[0])}
+              multiple={false}
+              enableSearch
+              placeholder="Load Character…"
             />
           </div>
-          <div className="card">
-            <h3>Context to Send</h3>
-            <div className="context-options">
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.stDescription}
-                  onChange={(e) => updateContextToSend('stDescription', e.target.checked)}
-                />{' '}
-                Description of SillyTavern & Char Card
-              </label>
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.persona}
-                  onChange={(e) => updateContextToSend('persona', e.target.checked)}
-                />{' '}
-                User's Persona
-              </label>
+        </div>
+      </div>
 
-              {(this_chid !== undefined || selected_group) && (
-                <div className="message-options">
-                  <h4>Messages to Include</h4>
-                  <select
-                    className="text_pole"
-                    value={settings.contextToSend.messages.type}
-                    onChange={(e) =>
-                      updateContextToSend('messages', {
-                        ...settings.contextToSend.messages,
-                        type: e.target.value as any,
-                      })
-                    }
-                  >
-                    <option value="none">None</option>
-                    <option value="all">All Messages</option>
-                    <option value="first">First X Messages</option>
-                    <option value="last">Last X Messages</option>
-                    <option value="range">Range</option>
-                  </select>
-                  {settings.contextToSend.messages.type === 'first' && (
-                    <div style={{ marginTop: '10px' }}>
-                      <label>
+      <div className="container">
+        {/* Left Column - Configuration */}
+        <div className="column">
+          <div className="card crec-collapsible">
+            <div className="crec-card-head" onClick={() => toggleSection('profile')}>
+              <h3>Connection Profile</h3>
+              <i className={`fa-solid ${collapsed.profile ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+            </div>
+            {!collapsed.profile && (
+              <div className="crec-card-body">
+                <STConnectionProfileSelect
+                  initialSelectedProfileId={settings.profileId}
+                  onChange={(p) => updateSetting('profileId', p?.id ?? '')}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="card crec-collapsible">
+            <div className="crec-card-head" onClick={() => toggleSection('context')}>
+              <h3>Context to Send</h3>
+              <i className={`fa-solid ${collapsed.context ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+            </div>
+            {!collapsed.context && (
+              <div className="crec-card-body context-options">
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.stDescription}
+                    onChange={(e) => updateContextToSend('stDescription', e.target.checked)}
+                  />{' '}
+                  Description of SillyTavern & Char Card
+                </label>
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.persona}
+                    onChange={(e) => updateContextToSend('persona', e.target.checked)}
+                  />{' '}
+                  User's Persona
+                </label>
+
+                {(this_chid !== undefined || selected_group) && (
+                  <div className="message-options">
+                    <h4>Messages to Include</h4>
+                    <select
+                      className="text_pole"
+                      value={settings.contextToSend.messages.type}
+                      onChange={(e) =>
+                        updateContextToSend('messages', {
+                          ...settings.contextToSend.messages,
+                          type: e.target.value as any,
+                        })
+                      }
+                    >
+                      <option value="none">None</option>
+                      <option value="all">All Messages</option>
+                      <option value="first">First X Messages</option>
+                      <option value="last">Last X Messages</option>
+                      <option value="range">Range</option>
+                    </select>
+                    {settings.contextToSend.messages.type === 'first' && (
+                      <div className="crec-inline-number">
                         First{' '}
                         <input
                           type="number"
@@ -616,12 +812,10 @@ export const MainPopup: FC = () => {
                           }
                         />{' '}
                         Messages
-                      </label>
-                    </div>
-                  )}
-                  {settings.contextToSend.messages.type === 'last' && (
-                    <div style={{ marginTop: '10px' }}>
-                      <label>
+                      </div>
+                    )}
+                    {settings.contextToSend.messages.type === 'last' && (
+                      <div className="crec-inline-number">
                         Last{' '}
                         <input
                           type="number"
@@ -636,13 +830,11 @@ export const MainPopup: FC = () => {
                           }
                         />{' '}
                         Messages
-                      </label>
-                    </div>
-                  )}
-                  {settings.contextToSend.messages.type === 'range' && (
-                    <div style={{ marginTop: '10px' }}>
-                      <label>
-                        Range:{' '}
+                      </div>
+                    )}
+                    {settings.contextToSend.messages.type === 'range' && (
+                      <div className="crec-inline-number">
+                        Range{' '}
                         <input
                           type="number"
                           className="text_pole small message-input"
@@ -669,227 +861,187 @@ export const MainPopup: FC = () => {
                           onChange={(e) =>
                             updateContextToSend('messages', {
                               ...settings.contextToSend.messages,
-                              range: { ...settings.contextToSend.messages.range!, end: parseInt(e.target.value) || 10 },
+                              range: {
+                                ...settings.contextToSend.messages.range!,
+                                end: parseInt(e.target.value) || 10,
+                              },
                             })
                           }
                         />
-                      </label>
-                    </div>
-                  )}
-                </div>
-              )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.charCard}
-                  onChange={(e) => updateContextToSend('charCard', e.target.checked)}
-                />{' '}
-                Selected Characters' Data
-              </label>
-              {settings.contextToSend.charCard && (
-                <STFancyDropdown
-                  items={characterDropdownItems}
-                  value={session.selectedCharacterIndexes}
-                  onChange={(v) => setSession((s) => ({ ...s, selectedCharacterIndexes: v }))}
-                  multiple
-                  enableSearch
-                />
-              )}
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.charCard}
+                    onChange={(e) => updateContextToSend('charCard', e.target.checked)}
+                  />{' '}
+                  Selected Characters' Data
+                </label>
+                {settings.contextToSend.charCard && (
+                  <STFancyDropdown
+                    items={characterDropdownItems}
+                    value={session.selectedCharacterIndexes}
+                    onChange={(v) => setSession((s) => ({ ...s, selectedCharacterIndexes: v }))}
+                    multiple
+                    enableSearch
+                  />
+                )}
 
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.worldInfo}
-                  onChange={(e) => updateContextToSend('worldInfo', e.target.checked)}
-                />{' '}
-                Selected World Info
-              </label>
-              {settings.contextToSend.worldInfo && (
-                <STFancyDropdown
-                  items={selectableWorldInfoDropdownItems}
-                  value={session.selectedWorldNames}
-                  onChange={(v) => setSession((s) => ({ ...s, selectedWorldNames: v }))}
-                  multiple
-                  enableSearch
-                />
-              )}
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.worldInfo}
+                    onChange={(e) => updateContextToSend('worldInfo', e.target.checked)}
+                  />{' '}
+                  Selected World Info
+                </label>
+                {settings.contextToSend.worldInfo && (
+                  <STFancyDropdown
+                    items={selectableWorldInfoDropdownItems}
+                    value={session.selectedWorldNames}
+                    onChange={(v) => setSession((s) => ({ ...s, selectedWorldNames: v }))}
+                    multiple
+                    enableSearch
+                  />
+                )}
 
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.existingFields}
-                  onChange={(e) => updateContextToSend('existingFields', e.target.checked)}
-                />{' '}
-                Existing Field Content
-              </label>
-              <label className="checkbox_label">
-                <input
-                  type="checkbox"
-                  checked={settings.contextToSend.dontSendOtherGreetings}
-                  onChange={(e) => updateContextToSend('dontSendOtherGreetings', e.target.checked)}
-                />{' '}
-                Don't send other alternate greetings
-              </label>
-            </div>
-          </div>
-          <div className="card">
-            <h3>Generation Options</h3>
-            <label title="You can edit in extension settings">
-              Main Context Template
-              <STPresetSelect
-                onItemsChange={() => {}}
-                label="Main Context Template"
-                items={mainContextPresetItems}
-                value={settings.mainContextTemplatePreset}
-                onChange={(v) => updateSetting('mainContextTemplatePreset', v ?? 'default')}
-              />
-            </label>
-            <label>
-              Max Context Tokens
-              <select
-                className="text_pole"
-                value={settings.maxContextType}
-                onChange={(e) => updateSetting('maxContextType', e.target.value as any)}
-              >
-                <option value="profile">Use profile preset</option>
-                <option value="sampler">Use active preset</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-            {settings.maxContextType === 'custom' && (
-              <input
-                type="number"
-                className="text_pole"
-                value={settings.maxContextValue}
-                onChange={(e) => updateSetting('maxContextValue', parseInt(e.target.value) || 16384)}
-              />
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.existingFields}
+                    onChange={(e) => updateContextToSend('existingFields', e.target.checked)}
+                  />{' '}
+                  Existing Field Content
+                </label>
+                <label className="checkbox_label">
+                  <input
+                    type="checkbox"
+                    checked={settings.contextToSend.dontSendOtherGreetings}
+                    onChange={(e) => updateContextToSend('dontSendOtherGreetings', e.target.checked)}
+                  />{' '}
+                  Don't send other alternate greetings
+                </label>
+              </div>
             )}
-            <label>
-              Max Response Tokens
-              <input
-                type="number"
-                className="text_pole"
-                value={settings.maxResponseToken}
-                onChange={(e) => updateSetting('maxResponseToken', parseInt(e.target.value) || 1024)}
-              />
-            </label>
-            <label>
-              Output Format
-              <select
-                className="text_pole"
-                value={settings.outputFormat}
-                onChange={(e) => updateSetting('outputFormat', e.target.value as any)}
-              >
-                <option value="none">Plain Text</option>
-                <option value="xml">XML</option>
-                <option value="json">JSON</option>
-              </select>
-            </label>
           </div>
-          <div className="card">
-            <h3>Additional Instructions</h3>
-            <STPresetSelect
-              label="Prompt Preset"
-              items={promptPresetItems}
-              value={settings.promptPreset}
-              onChange={(v) => updateSetting('promptPreset', v ?? 'default')}
-              onItemsChange={(items) =>
-                updateSetting(
-                  'promptPresets',
-                  items.reduce(
-                    (acc, i) => ({ ...acc, [i.value]: settings.promptPresets[i.value] ?? { content: '' } }),
-                    {},
-                  ),
-                )
-              }
-              enableCreate
-              enableDelete
-              enableRename
-              readOnlyValues={['default']}
-            />
-            <STTextarea
-              value={settings.promptPresets[settings.promptPreset]?.content ?? ''}
-              onChange={(e) =>
-                updateSetting('promptPresets', {
-                  ...settings.promptPresets,
-                  [settings.promptPreset]: { content: e.target.value },
-                })
-              }
-              rows={4}
-            />
+
+          <div className="card crec-collapsible">
+            <div className="crec-card-head" onClick={() => toggleSection('options')}>
+              <h3>Generation Options</h3>
+              <i className={`fa-solid ${collapsed.options ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+            </div>
+            {!collapsed.options && (
+              <div className="crec-card-body">
+                <label title="You can edit in extension settings">
+                  Main Context Template
+                  <STPresetSelect
+                    onItemsChange={() => {}}
+                    label="Main Context Template"
+                    items={mainContextPresetItems}
+                    value={settings.mainContextTemplatePreset}
+                    onChange={(v) => updateSetting('mainContextTemplatePreset', v ?? 'default')}
+                  />
+                </label>
+                <label>
+                  Max Context Tokens
+                  <select
+                    className="text_pole"
+                    value={settings.maxContextType}
+                    onChange={(e) => updateSetting('maxContextType', e.target.value as any)}
+                  >
+                    <option value="profile">Use profile preset</option>
+                    <option value="sampler">Use active preset</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                {settings.maxContextType === 'custom' && (
+                  <input
+                    type="number"
+                    className="text_pole"
+                    value={settings.maxContextValue}
+                    onChange={(e) => updateSetting('maxContextValue', parseInt(e.target.value) || 16384)}
+                  />
+                )}
+                <label>
+                  Max Response Tokens
+                  <input
+                    type="number"
+                    className="text_pole"
+                    value={settings.maxResponseToken}
+                    onChange={(e) => updateSetting('maxResponseToken', parseInt(e.target.value) || 1024)}
+                  />
+                </label>
+                <label>
+                  Output Format
+                  <select
+                    className="text_pole"
+                    value={settings.outputFormat}
+                    onChange={(e) => updateSetting('outputFormat', e.target.value as any)}
+                  >
+                    <option value="none">Plain Text</option>
+                    <option value="xml">XML</option>
+                    <option value="json">JSON</option>
+                  </select>
+                </label>
+                <label className="checkbox_label crec-debug-toggle">
+                  <input
+                    type="checkbox"
+                    checked={settings.showDebugView}
+                    onChange={(e) => updateSetting('showDebugView', e.target.checked)}
+                  />{' '}
+                  Show per-field debug view (captured last prompt + response)
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="card crec-collapsible">
+            <div className="crec-card-head" onClick={() => toggleSection('instructions')}>
+              <h3>Additional Instructions</h3>
+              <i className={`fa-solid ${collapsed.instructions ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+            </div>
+            {!collapsed.instructions && (
+              <div className="crec-card-body">
+                <STPresetSelect
+                  label="Prompt Preset"
+                  items={promptPresetItems}
+                  value={settings.promptPreset}
+                  onChange={(v) => updateSetting('promptPreset', v ?? 'default')}
+                  onItemsChange={(items) =>
+                    updateSetting(
+                      'promptPresets',
+                      items.reduce(
+                        (acc, i) => ({ ...acc, [i.value]: settings.promptPresets[i.value] ?? { content: '' } }),
+                        {},
+                      ),
+                    )
+                  }
+                  enableCreate
+                  enableDelete
+                  enableRename
+                  readOnlyValues={['default']}
+                />
+                <STTextarea
+                  value={settings.promptPresets[settings.promptPreset]?.content ?? ''}
+                  onChange={(e) =>
+                    updateSetting('promptPresets', {
+                      ...settings.promptPresets,
+                      [settings.promptPreset]: { content: e.target.value },
+                    })
+                  }
+                  rows={4}
+                />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right Column */}
+        {/* Right Column - Fields */}
         <div className="wide-column">
-          <div className="character-field-actions">
-            <STButton
-              onClick={handleOpenGlobalReviseSessions}
-              title="Open global revision sessions to edit multiple fields at once"
-            >
-              <i className="fa-solid fa-comments"></i>
-            </STButton>
-            <STButton onClick={handleSaveAsNew}>Save as New</STButton>
-            <STButton onClick={handleOverride} disabled={!loadedCharacter}>
-              Override Char
-            </STButton>
-            {settings.showSaveAsWorldInfoEntry.show && (
-              <STFancyDropdown
-                items={worldInfoDropdownItems}
-                placeholder="Save as WI Entry"
-                closeOnSelect
-                value={[]}
-                onChange={(v) => {}}
-                onBeforeSelection={async (current, proposed) => {
-                  if (!session.fields.name.value) {
-                    st_echo('warning', 'Please enter a name first.');
-                    return false;
-                  }
-                  const worldName = proposed[0];
-                  const template = Handlebars.compile(settings.prompts.worldInfoCharDefinition.content);
-                  const content = template({
-                    character: buildWorldInfoCharacter(session.fields, greetings),
-                  });
-                  const entry: WIEntry = {
-                    uid: -1,
-                    key: [session.fields.name.value],
-                    content,
-                    comment: session.fields.name.value,
-                    disable: false,
-                    keysecondary: [],
-                  };
-                  try {
-                    await applyWorldInfoEntry({ entry, selectedWorldName: worldName, operation: 'add' });
-                    st_echo('success', `Entry added to ${worldName}.`);
-                  } catch (err: any) {
-                    st_echo('error', `Failed to add WI Entry: ${err.message}`);
-                  }
-                  return false; // Prevent selection
-                }}
-              />
-            )}
-            <STButton onClick={handleReset}>
-              <i className="fa-solid fa-rotate-left" style={{ marginRight: '10px' }}></i>Reset Fields
-            </STButton>
-            <STButton
-              onClick={handleLoadCurrentCharacter}
-              title="Load the character from the currently open chat"
-              disabled={!!selected_group || this_chid === undefined}
-            >
-              Current Char
-            </STButton>
-            <div style={{ width: '200px' }} title="Load Character Data">
-              <STFancyDropdown
-                items={characterDropdownItems}
-                value={loadedCharacter ? [String(allCharacters.indexOf(loadedCharacter))] : []}
-                onChange={(v) => handleLoadCharacter(v[0])}
-                multiple={false}
-                enableSearch
-                placeholder="Load Character..."
-              />
-            </div>
-          </div>
           <div className="tab-buttons">
             <STButton
               onClick={() => setActiveTab('core')}
@@ -933,13 +1085,14 @@ export const MainPopup: FC = () => {
                       rows={config.rows}
                       promptEnabled={config.promptEnabled}
                       isGenerating={isGenerating.includes(fieldId)}
+                      isDebug={debugEnabled}
                       onValueChange={(id, v) => handleFieldChange(id, v, 'value', false)}
                       onPromptChange={(id, p) => handleFieldChange(id, p, 'prompt', false)}
                       onGenerate={handleGenerate}
                       onContinue={(id) => handleGenerate(id, session.fields[id].value)}
                       onClear={(id) => handleClearField(id, false)}
                       onCompare={handleCompare}
-                      onOpenReviseSessions={handleOpenReviseSessions}
+                      onShowDebug={(id) => setOpenDebugFor(id)}
                     />
                   );
                 })}
@@ -950,6 +1103,7 @@ export const MainPopup: FC = () => {
                   onGenerate={(i) => handleGenerate(`alternate_greetings_${i + 1}`)}
                   onContinue={(i) => handleGenerate(`alternate_greetings_${i + 1}`, greetings[i].value)}
                   onCompare={handleCompare}
+                  onShowDebug={(id) => setOpenDebugFor(id)}
                 />
               </div>
             )}
@@ -966,12 +1120,14 @@ export const MainPopup: FC = () => {
                     isDraft
                     rows={5}
                     isGenerating={isGenerating.includes(fieldId)}
+                    isDebug={debugEnabled}
                     onValueChange={(id, v) => handleFieldChange(id, v, 'value', true)}
                     onPromptChange={(id, p) => handleFieldChange(id, p, 'prompt', true)}
                     onGenerate={handleGenerate}
                     onContinue={(id) => handleGenerate(id, session.draftFields[id].value)}
                     onClear={(id) => handleClearField(id, true)}
                     onDelete={handleDeleteDraftField}
+                    onShowDebug={(id) => setOpenDebugFor(id)}
                   />
                 ))}
               </div>
@@ -995,23 +1151,11 @@ export const MainPopup: FC = () => {
         />
       )}
 
-      {reviseSessionManagerOpen && reviseSessionTarget && (
+      {debugEnabled && openDebugCapture && openDebugFor && (
         <Popup
           type={POPUP_TYPE.DISPLAY}
-          content={
-            <ReviseSessionManager
-              target={reviseSessionTarget}
-              onClose={() => setReviseSessionManagerOpen(false)}
-              onApply={handleApplyReviseSessionChanges}
-              initialState={{ fields: session.fields, draftFields: session.draftFields }}
-              contextToSend={settings.contextToSend}
-              sessionForContext={{
-                selectedCharacterIndexes: session.selectedCharacterIndexes,
-                selectedWorldNames: session.selectedWorldNames,
-              }}
-            />
-          }
-          onComplete={() => setReviseSessionManagerOpen(false)}
+          content={<DebugView capture={openDebugCapture} />}
+          onComplete={() => setOpenDebugFor(null)}
           options={{ wide: true, large: true }}
         />
       )}

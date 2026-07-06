@@ -131,36 +131,39 @@ export const DEFAULT_CHAR_CARD_DEFINITION_TEMPLATE = `{{#if characters}}
 {{/if}}`;
 
 export const DEFAULT_XML_FORMAT_DESC = `=== RESPONSE FORMAT INSTRUCTIONS ===
-You MUST provide your response wrapped ONLY in a single <response> XML tag.
+You MUST respond with ONLY a single \`<response>\` XML tag containing the generated field content.
 
-When providing code in your response, wrap it in triple backticks:
+Rules:
+1. Output exactly ONE \`<response>\` tag. No other XML tags.
+2. Do NOT wrap the response in markdown code fences (no \`\`\`).
+3. Do NOT add any prose, explanation, or commentary outside the tag.
+4. The content inside the tag is the final field value — write it directly as it should appear on the character card.
 
-Example:
-\`\`\`
-<response>Generated content for the field goes here.</response>
-\`\`\``;
+Example of a correct response:
+<response>The character's description text goes here.</response>`;
 
 export const DEFAULT_JSON_FORMAT_DESC = `=== RESPONSE FORMAT INSTRUCTIONS ===
-You MUST provide your response as a JSON object with a single key "response" containing the generated content as a string.
+You MUST respond with ONLY a JSON object of the form \`{"response": "..."}\` containing the generated field content as a single string.
 
-When providing code in your response, wrap it in triple backticks:
+Rules:
+1. Output exactly ONE JSON object with a single key \`response\`.
+2. Do NOT wrap the response in markdown code fences (no \`\`\`).
+3. Do NOT add any prose, explanation, or commentary outside the object.
+4. The string value is the final field value — write it directly as it should appear on the character card. Escape newlines as \\n and quotes as \\".
 
-Example:
-\`\`\`
-{
-  "response": "Generated content for the field goes here."
-}
-\`\`\``;
+Example of a correct response:
+{"response":"The character's description text goes here."}`;
 
 export const DEFAULT_NONE_FORMAT_DESC = `=== RESPONSE FORMAT INSTRUCTIONS ===
-You MUST provide ONLY the raw text content for the field, without any formatting, XML tags, JSON structure, or explanatory text. Just the content itself.
+You MUST respond with ONLY the raw text content for the field — no wrapping tags, no JSON, no code fences, and no explanatory prose.
 
-When providing code in your response, wrap it in triple backticks:
+Rules:
+1. Output exactly the final field value, nothing else.
+2. Do NOT wrap the response in markdown code fences (no \`\`\`).
+3. Write the content exactly as it should appear on the character card.
 
-Example:
-\`\`\`
-Generated content for the field goes here.
-\`\`\``;
+Example of a correct response:
+The character's description text goes here.`;
 
 export const DEFAULT_OUTPUT_FORMAT_INSTRUCTIONS = '{{activeFormatInstructions}}';
 
@@ -195,6 +198,8 @@ export const DEFAULT_WORLD_INFO_CHARACTER_DEFINITION = `### {{character.name}}
 
 export const DEFAULT_EXISTING_FIELDS_DEFINITION = `{{#is_not_empty fields}}
 === CURRENT CHARACTER FIELD VALUES ===
+These are the field values already filled in. Treat them as canon: your output for the requested field must stay consistent with them unless the user instructions explicitly say otherwise.
+
 {{#is_not_empty fields.core}}
 **Core Fields:**
 {{#each fields.core as |value key|}}
@@ -221,53 +226,24 @@ export const DEFAULT_PERSONA_DESCRIPTION = `## User's Persona Description
 name: {{user}}
 {{persona}}`;
 
-export const DEFAULT_TASK_DESCRIPTION = `Your task is to generate the content for the "{{targetField}}" field of a character card. Base your response on the preceding context (chat history, persona, system prompts, character/lore definitions, existing fields, etc.).
-{{#if userInstructions}}
+export const DEFAULT_TASK_DESCRIPTION = `Your task is to generate the content for the "{{targetField}}" field of a character card.
 
-Follow these user instructions: {{userInstructions}}
+Use ALL of the provided context (chat history, persona, existing fields, character definitions, lorebooks) to inform your output. The goal is a cohesive card where every field is consistent with the others.
+
+Guidelines:
+- Match the tone and style of any provided example dialogue and existing fields.
+- Keep {{char}} and {{user}} macros intact in dialogue-heavy fields (first_mes, mes_example, alternate greetings). For prose fields (description, personality, scenario), prefer naming the character directly unless a macro reads more naturally.
+- Do NOT restate the user instructions verbatim. Use them as constraints.
+- Do NOT add commentary, reasoning, or any text outside the requested format.
+
+Field-specific guidance for this field: {{fieldGuidance}}
+
+{{#if userInstructions}}
+User instructions (treat as authoritative constraints for this generation):
+{{userInstructions}}
 {{/if}}
 {{#if fieldSpecificInstructions}}
 
-Field-specific instructions: {{fieldSpecificInstructions}}
+Field-specific instructions (applies only to this field):
+{{fieldSpecificInstructions}}
 {{/if}}`;
-
-export const DEFAULT_REVISE_JSON_PROMPT = `You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid JSON object that strictly adheres to the provided JSON schema.
-
-**CRITICAL INSTRUCTIONS:**
-1.  You MUST wrap the entire JSON object in a markdown code block (\`\`\`json\\n...\\n\`\`\`).
-2.  Your response MUST NOT contain any explanatory text, comments, or any other content outside of this single code block.
-3.  The JSON object inside the code block MUST be valid and conform to the schema.
-
-**JSON SCHEMA TO FOLLOW:**
-\`\`\`json
-{{schema}}
-\`\`\`
-
-**EXAMPLE OF A PERFECT RESPONSE:**
-\`\`\`json
-{{example_response}}
-\`\`\``;
-
-export const DEFAULT_REVISE_XML_PROMPT = `You are a highly specialized AI assistant. Your SOLE purpose is to generate a single, valid XML structure that strictly adheres to the provided example.
-
-**CRITICAL INSTRUCTIONS:**
-1.  You MUST wrap the entire XML object in a markdown code block (\`\`\`xml\\n...\\n\`\`\`).
-2.  Your response MUST NOT contain any explanatory text, comments, or any other content outside of this single code block.
-3.  The XML object inside the code block MUST be valid.
-
-**JSON SCHEMA TO FOLLOW:**
-\`\`\`json
-{{schema}}
-\`\`\`
-
-**EXAMPLE OF A PERFECT RESPONSE:**
-\`\`\`json
-{{example_response}}
-\`\`\``;
-
-export const DEFAULT_REVISE_TASK_DESCRIPTION = `You are an expert character writer assisting a user. Your task is to respond with the modified character data in the required structured format.
-Your justification should be friendly and conversational. Be direct and focus on the changes you've made. Vary your responses and do not start every message the same way. Do not repeat the user's request back to them.
-
-For this session, we are focusing on: {{#if isFieldSession}}the "{{targetLabel}}" field.{{else}}the entire character card.{{/if}}
-
-Initial character state is provided in the context. Read the user's request, and provide a response that incorporates their changes.`;

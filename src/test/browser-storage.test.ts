@@ -1,14 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import {
-  CHARACTER_SESSION_KEY,
-  loadCharacterSession,
-  loadReviseSessions,
-  REVISE_SESSIONS_KEY,
-  saveCharacterSession,
-  saveReviseSessions,
-} from '../browser-storage.js';
+import { CHARACTER_SESSION_KEY, loadCharacterSession, saveCharacterSession } from '../browser-storage.js';
 import type { Session } from '../generate.js';
-import type { ReviseSession } from '../revise-types.js';
 
 class MemoryLocalForage {
   private items = new Map<string, unknown>();
@@ -56,17 +48,6 @@ const createSession = (): Session => ({
   lastLoadedCharacterId: 'test.png',
 });
 
-const createReviseSession = (): ReviseSession => ({
-  id: 'rs-1',
-  name: 'Test session',
-  type: 'global',
-  createdAt: '2026-06-09T00:00:00.000Z',
-  messages: [{ id: 'm-1', role: 'assistant', content: 'Done' }],
-  context: { mainContextTemplatePreset: 'default' },
-  profileId: 'profile-1',
-  promptEngineeringMode: 'native',
-});
-
 describe('browser storage', () => {
   test('loads and saves Character Creator session through localforage', async () => {
     const storage = new MemoryLocalForage();
@@ -91,33 +72,10 @@ describe('browser storage', () => {
     expect(legacyStorage.getItem(CHARACTER_SESSION_KEY)).toBeNull();
   });
 
-  test('loads and saves revise sessions through localforage', async () => {
-    const storage = new MemoryLocalForage();
-    const sessions = [createReviseSession()];
-
-    expect((await saveReviseSessions(sessions, storage)).persisted).toBe(true);
-    expect((await loadReviseSessions(storage, new MemoryLegacyStorage())).value).toEqual(sessions);
-  });
-
-  test('migrates legacy revise sessions from localStorage', async () => {
-    const storage = new MemoryLocalForage();
-    const legacyStorage = new MemoryLegacyStorage();
-    const sessions = [createReviseSession()];
-
-    legacyStorage.setItem(REVISE_SESSIONS_KEY, JSON.stringify(sessions));
-
-    const result = await loadReviseSessions(storage, legacyStorage);
-
-    expect(result.migrated).toBe(true);
-    expect(result.value).toEqual(sessions);
-    expect(await storage.getItem(REVISE_SESSIONS_KEY)).toEqual(sessions);
-    expect(legacyStorage.getItem(REVISE_SESSIONS_KEY)).toBeNull();
-  });
-
   test('does not throw when browser storage quota is exceeded', async () => {
     const storage = new MemoryLocalForage(true);
 
-    const result = await saveReviseSessions([createReviseSession()], storage);
+    const result = await saveCharacterSession(createSession(), storage);
 
     expect(result.persisted).toBe(false);
     expect(result.error).toBeInstanceOf(DOMException);
