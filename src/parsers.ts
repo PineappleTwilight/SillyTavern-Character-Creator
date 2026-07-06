@@ -9,6 +9,10 @@ const xmlParser = new XMLParser({
 
 export interface ParseOptions {
   schema?: any;
+  /** Called when strict parsing failed and the parser fell back to regex-based
+   * partial-content recovery (unmatched tags, truncated stream). Use to surface
+   * a warning to the user; recovery is silent by default. */
+  onRecovery?: (reason: string) => void;
 }
 
 function ensureArray(data: any, schema: any) {
@@ -126,9 +130,15 @@ export function parseResponse(
     // For single-field generation, we can often just return the cleaned text.
     if (format !== 'none' && !options.schema) {
       const responseMatch = cleanedContent.match(/<response>([\s\S]*)/);
-      if (responseMatch) return responseMatch[1].replace(/<\/[\s\S]*$/, '').trim();
+      if (responseMatch) {
+        options.onRecovery?.(`XML response was malformed; recovered inner text via regex (parse error: ${error?.message ?? 'unknown'})`);
+        return responseMatch[1].replace(/<\/[\s\S]*$/, '').trim();
+      }
       const jsonMatch = cleanedContent.match(/"response":\s*"([\s\S]*)/);
-      if (jsonMatch) return jsonMatch[1].replace(/"\s*}\s*$/, '');
+      if (jsonMatch) {
+        options.onRecovery?.(`JSON response was malformed; recovered inner text via regex (parse error: ${error?.message ?? 'unknown'})`);
+        return jsonMatch[1].replace(/"\s*}\s*$/, '');
+      }
     }
 
     console.error(`Error parsing response in format '${format}':`, error);
@@ -148,6 +158,22 @@ export function parseResponse(
 }
 
 /**
+ * Escape a string for safe inclusion as the value of a JSON string literal.
+ * Order matters: backslash MUST be first so we don't double-escape escapes
+ * produced by later steps. Covers all JSON-required escapes plus control
+ * characters (U+0000 through U+001F) per RFC 8259 §7.
+ */
+function escapeJsonStringContent(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/[\u0000-\u001F]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/**
  * Gets the prefilled incomplete message for continuing generation
  * @param content The current content to continue from
  * @param format The expected format ('xml', 'json', 'none')
@@ -159,7 +185,10 @@ export function getPrefilled(content: string, format: 'xml' | 'json' | 'none'): 
     case 'xml':
       return `<response>${trimmedContent}`;
     case 'json':
-      return `{\n  "response": "${trimmedContent.replace(/"/g, '\\"')}`; // Basic escaping
+      // Closing quote/brace deliberately omitted: the model finishes the structure.
+      // Existing content must be fully escaped as a JSON string value so multiline
+      // drafts don't produce invalid JSON and break Continue.
+      return `{\n  "response": "${escapeJsonStringContent(trimmedContent)}`;
     case 'none':
       return trimmedContent;
     default:

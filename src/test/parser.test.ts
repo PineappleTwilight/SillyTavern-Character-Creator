@@ -1,5 +1,5 @@
-import { describe, test, expect } from 'vitest';
-import { parseResponse } from '../parsers.js';
+import { describe, test, expect, vi } from 'vitest';
+import { parseResponse, getPrefilled } from '../parsers.js';
 
 describe('parseResponse with JSON format', () => {
   test('detailed code block', () => {
@@ -143,5 +143,99 @@ describe('parseResponse with plaintext (none) format', () => {
   test('handles input with only code block markers', () => {
     const input = '```\n```';
     expect(parseResponse(input, 'none')).toBe('');
+  });
+});
+
+describe('parseResponse onRecovery callback', () => {
+  test('does not call onRecovery on clean JSON parse', () => {
+    const onRecovery = vi.fn();
+    parseResponse('{"response": "hello"}', 'json', { onRecovery });
+    expect(onRecovery).not.toHaveBeenCalled();
+  });
+
+  test('does not call onRecovery on clean XML parse', () => {
+    const onRecovery = vi.fn();
+    parseResponse('<response>hello</response>', 'xml', { onRecovery });
+    expect(onRecovery).not.toHaveBeenCalled();
+  });
+
+  test('calls onRecovery when XML recovery falls back to regex', () => {
+    const onRecovery = vi.fn();
+    // given a <response> tag followed by an unterminated second tag, the lenient parser throws and regex recovery kicks in
+    const result = parseResponse('<response>abc<', 'xml', { onRecovery });
+    expect(onRecovery).toHaveBeenCalledTimes(1);
+    expect(onRecovery.mock.calls[0][0]).toMatch(/XML response was malformed/);
+    expect(result).toBe('abc<');
+  });
+
+  test('calls onRecovery when JSON recovery falls back to regex', () => {
+    const onRecovery = vi.fn();
+    // given an opening of a JSON response with no closing, strict parse fails and regex recovery kicks in
+    const result = parseResponse('"response": "partial content here', 'json', { onRecovery });
+    expect(onRecovery).toHaveBeenCalledTimes(1);
+    expect(onRecovery.mock.calls[0][0]).toMatch(/JSON response was malformed/);
+    expect(result).toBe('partial content here');
+  });
+
+  test('still throws when no recovery is possible', () => {
+    const onRecovery = vi.fn();
+    // given garbage that matches neither XML nor JSON regex fallbacks, the schema-less no-recovery path throws
+    expect(() => parseResponse('   there is no parseable structure here   ', 'json', { onRecovery })).toThrow(
+      'Model response is not valid JSON',
+    );
+  });
+});
+
+describe('getPrefilled', () => {
+  test('XML format wraps content in opening response tag', () => {
+    expect(getPrefilled('Hello world', 'xml')).toBe('<response>Hello world');
+  });
+
+  test('XML format trims surrounding whitespace', () => {
+    expect(getPrefilled('  Hello  ', 'xml')).toBe('<response>Hello');
+  });
+
+  test('none format returns trimmed content', () => {
+    expect(getPrefilled('  raw text  ', 'none')).toBe('raw text');
+  });
+
+  test('JSON format opens the response object and value string', () => {
+    expect(getPrefilled('Simple', 'json')).toBe('{\n  "response": "Simple');
+  });
+
+  test('JSON format escapes double quotes in existing content', () => {
+    // given content with embedded quotes, when prefilled the model sees \" so the completed JSON stays valid
+    expect(getPrefilled('She said "hi"', 'json')).toBe('{\n  "response": "She said \\"hi\\"');
+  });
+
+  test('JSON format escapes backslashes before other escapes (order matters)', () => {
+    // given a trailing backslash, when not escaped first it would escape the model's closing quote and break JSON
+    expect(getPrefilled('path\\', 'json')).toBe('{\n  "response": "path\\\\');
+    // given backslash AND quote together, when escaped, backslash is doubled first then quote is escaped
+    expect(getPrefilled('a\\"b', 'json')).toBe('{\n  "response": "a\\\\\\"b');
+  });
+
+  test('JSON format escapes newlines as \\n', () => {
+    expect(getPrefilled('line1\nline2', 'json')).toBe('{\n  "response": "line1\\nline2');
+  });
+
+  test('JSON format escapes carriage returns and tabs', () => {
+    expect(getPrefilled('a\rb\tc', 'json')).toBe('{\n  "response": "a\\rb\\tc');
+  });
+
+  test('JSON format escapes other control characters as \\uXXXX', () => {
+    // given U+0007 (bell) and U+001B (escape), these are valid in source text but invalid unescaped per RFC 8259 §7
+    expect(getPrefilled('a\u0007b\u001Bc', 'json')).toBe('{\n  "response": "a\\u0007b\\u001bc');
+  });
+
+  test('JSON format escapes mixed content with all special characters', () => {
+    const content = 'He said "hi",\nthen left\t\\gone.';
+    expect(getPrefilled(content, 'json')).toBe(
+      '{\n  "response": "He said \\"hi\\",\\nthen left\\t\\\\gone.',
+    );
+  });
+
+  test('throws on unsupported format', () => {
+    expect(() => getPrefilled('x', 'yaml' as any)).toThrow('Unsupported format specified: yaml');
   });
 });

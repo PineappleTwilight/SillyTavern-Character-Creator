@@ -1,10 +1,11 @@
-import { buildPrompt, BuildPromptOptions, ExtensionSettingsManager, Message } from 'sillytavern-utils-lib';
+import { buildPrompt, BuildPromptOptions, Message } from 'sillytavern-utils-lib';
 import { parseResponse, getPrefilled } from './parsers.js';
 import { ExtractedData } from 'sillytavern-utils-lib/types';
 import { Character } from 'sillytavern-utils-lib/types';
 import { WIEntry } from 'sillytavern-utils-lib/types/world-info';
 import { name1, st_echo } from 'sillytavern-utils-lib/config';
-import { ExtensionSettings, MessageRole, OutputFormat, settingsManager } from './settings.js';
+import { MessageRole, OutputFormat, settingsManager } from './settings.js';
+import { DEFAULT_SETTINGS } from './settings.js';
 
 import * as Handlebars from 'handlebars';
 import './handlebars-helpers.js';
@@ -57,8 +58,7 @@ export interface Session {
   lastLoadedCharacterId: string;
 }
 
-// @ts-ignore
-const dumbSettings = new ExtensionSettingsManager<ExtensionSettings>('dumb', {}).getSettings();
+export type PromptSettings = typeof DEFAULT_SETTINGS.prompts;
 
 export interface DebugCapture {
   targetField: string;
@@ -80,7 +80,7 @@ export interface RunCharacterFieldGenerationParams {
   session: Session;
   allCharacters: Character[];
   entriesGroupByWorldName: Record<string, WIEntry[]>;
-  promptSettings: typeof dumbSettings.prompts;
+  promptSettings: Partial<PromptSettings>;
   formatDescription: {
     content: string;
   };
@@ -132,7 +132,12 @@ export async function runCharacterFieldGeneration({
 
   templateData['char'] = session.fields.name.value ?? '{{char}}';
   templateData['user'] = includeUserMacro && name1 ? name1 : '{{user}}';
-  templateData['persona'] = '{{persona}}'; // ST going to replace this with the actual persona description
+  // Bake the actual persona description so {{persona}} in user/field prompts
+  // resolves here. Deferring to substituteParams downstream would leak persona
+  // text even when persona context is OFF. When disabled, leave the macro intact
+  // so ST replacement yields empty (no-op).
+  const personaDescription = includeUserMacro ? ((globalContext as any).power_user?.persona_description as string | undefined) : undefined;
+  templateData['persona'] = personaDescription && personaDescription.trim() ? personaDescription : '{{persona}}';
 
   templateData['targetField'] = targetField;
   templateData['fieldGuidance'] =
@@ -167,6 +172,9 @@ export async function runCharacterFieldGeneration({
   // Add Definitions of Selected Lorebooks (World Info)
   {
     const lorebooksData: Record<string, WIEntry[]> = {};
+    // Two-pass: include a lorebook iff it has any enabled entry, then strip the
+    // disabled entries themselves. Avoids sending empty worlds while letting
+    // partially-enabled lorebooks contribute their active entries.
     Object.entries(entriesGroupByWorldName)
       .filter(
         ([worldName, entries]) =>
@@ -258,11 +266,14 @@ export async function runCharacterFieldGeneration({
         continue;
       }
 
-      let newTemplateData = structuredClone(templateData);
-      if (mainContext.promptName === 'stDescription') {
-        newTemplateData['char'] = '{{char}}';
-        newTemplateData['user'] = '{{user}}';
-      }
+      // Only stDescription needs char/user swapped to {{char}}/{{user}} macros
+      // (so substituteParams can resolve them next). Other blocks reuse templateData
+      // directly — skipping the per-iteration deep clone avoids duplicating large
+      // character/lorebook payloads on every block.
+      const needsMacroSwap = mainContext.promptName === 'stDescription';
+      const localTemplateData = needsMacroSwap
+        ? { ...templateData, char: '{{char}}', user: '{{user}}' }
+        : templateData;
 
       const prompt = promptSettings[mainContext.promptName];
       if (!prompt) {
@@ -270,7 +281,7 @@ export async function runCharacterFieldGeneration({
       }
       const message: Message = {
         role: mainContext.role,
-        content: Handlebars.compile(prompt.content, { noEscape: true })(newTemplateData),
+        content: Handlebars.compile(prompt.content, { noEscape: true })(localTemplateData),
       };
       message.content = message.content.replaceAll('{{user}}', '[[[crec_veryUniqueUserPlaceHolder]]]');
       message.content = message.content.replaceAll('{{char}}', '[[[crec_veryUniqueCharPlaceHolder]]]');
@@ -306,7 +317,11 @@ export async function runCharacterFieldGeneration({
   // We must combine the start of the structure with the model's completion to parse it correctly.
   const contentToParse = continueFrom ? getPrefilled(continueFrom, outputFormat) + response.content : response.content;
 
-  const result = parseResponse(contentToParse, outputFormat);
+  const result = parseResponse(contentToParse, outputFormat, {
+    onRecovery: (reason) => {
+      st_echo('warning', `[Character Creator] ${reason}. Open the Debug View for this field to inspect the raw response.`);
+    },
+  });
 
   let finalContent: string;
   if (typeof result === 'string') {

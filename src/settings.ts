@@ -238,7 +238,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   promptPresets: {
     default: {
       content:
-        'Generate the field content based on the chat history and existing character details. Be creative but consistent.',
+        'Generate the requested field for this character card. Stay consistent with any existing fields already filled in — characters, relationships, tone, and setting should match. Use the provided context (chat history, persona, lorebook, selected characters) to ground the result. If a field-specific prompt is set below, treat it as the authoritative constraint for this generation.',
     },
   },
 
@@ -412,7 +412,7 @@ export async function initializeSettings(): Promise<void> {
                 promptPresets: previous?.promptPresets ?? {
                   default: {
                     content:
-                      'Generate the field content based on the chat history and existing character details. Be creative but consistent.',
+                      'Generate the requested field for this character card. Stay consistent with any existing fields already filled in — characters, relationships, tone, and setting should match. Use the provided context (chat history, persona, lorebook, selected characters) to ground the result. If a field-specific prompt is set below, treat it as the authoritative constraint for this generation.',
                   },
                 },
 

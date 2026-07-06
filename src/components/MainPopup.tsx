@@ -277,28 +277,23 @@ export const MainPopup: FC = () => {
   }, []);
 
   const buildPromptSettings = useCallback(() => {
-    const promptSettings = structuredClone(settings.prompts);
+    const promptSettings: Partial<typeof settings.prompts> = structuredClone(settings.prompts);
     if (!settings.contextToSend.stDescription) {
-      // @ts-ignore
       delete promptSettings.stDescription;
     }
     if (!settings.contextToSend.charCard || session.selectedCharacterIndexes.length === 0) {
-      // @ts-ignore
       delete promptSettings.charDefinitions;
     }
     if (!settings.contextToSend.worldInfo || session.selectedWorldNames.length === 0) {
-      // @ts-ignore
       delete promptSettings.lorebookDefinitions;
     }
     if (!settings.contextToSend.existingFields) {
-      // @ts-ignore
       delete promptSettings.existingFieldDefinitions;
     }
     if (!settings.contextToSend.persona) {
-      // @ts-ignore
       delete promptSettings.personaDescription;
     }
-    // @ts-ignore - since this is only for saving as world info entry
+    // World Info Character Definition is only consumed when saving as a WI entry.
     delete promptSettings.worldInfoCharDefinition;
     return promptSettings;
   }, [settings, session.selectedCharacterIndexes, session.selectedWorldNames]);
