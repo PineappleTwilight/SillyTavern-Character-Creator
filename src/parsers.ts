@@ -7,6 +7,15 @@ const xmlParser = new XMLParser({
   allowBooleanAttributes: true,
 });
 
+// Character-card example dialogues use literal <START> markers between example
+// chunks; these look like XML open tags to the parser and silently produce
+// nested-object structures that lose the marker (and content). Pack <START>
+// into a private-use sentinel before parsing, restore after extraction.
+const START_SENTINEL = '\uE000START\uE001';
+const START_TAG_PATTERN = /<START>/g;
+const packStart = (s: string): string => s.replace(START_TAG_PATTERN, START_SENTINEL);
+const unpackStart = (s: string): string => s.split(START_SENTINEL).join('<START>');
+
 export interface ParseOptions {
   schema?: any;
   /** Called when strict parsing failed and the parser fell back to regex-based
@@ -92,35 +101,36 @@ export function parseResponse(
 
   try {
     switch (format) {
-      case 'xml':
-        // For 'continue' functionality, the XML might be incomplete. We parse what we can.
-        // The validator is too strict for partial content, so we bypass it in those cases.
-        // A simple heuristic: if it doesn't end with the closing root tag, it's likely partial.
+      case 'xml': {
+        // Pack <START> markers so they don't look like XML tags (see top of file).
+        const packedXml = packStart(cleanedContent);
         if (options.schema) {
-          const validationResult = XMLValidator.validate(cleanedContent);
+          const validationResult = XMLValidator.validate(packedXml);
           if (validationResult !== true) {
             throw new Error(`Model response is not valid XML: ${validationResult.err.msg}`);
           }
         }
-        let parsedXml = xmlParser.parse(cleanedContent);
+        let parsedXml = xmlParser.parse(packedXml);
         if (parsedXml.root) {
           parsedXml = parsedXml.root;
         } else if (parsedXml.response) {
-          // Handle simple <response> tag for single-field generation
-          return extractStringValue(parsedXml.response);
+          return unpackStart(extractStringValue(parsedXml.response));
         }
         if (options.schema) {
           ensureArray(parsedXml, options.schema);
           return parsedXml;
         }
-        return extractStringValue(parsedXml);
+        return unpackStart(extractStringValue(parsedXml));
+      }
 
-      case 'json':
+      case 'json': {
         const parsedJson = JSON.parse(cleanedContent);
-        return options.schema ? parsedJson : extractStringValue(parsedJson);
+        const extracted = options.schema ? parsedJson : extractStringValue(parsedJson);
+        return typeof extracted === 'string' ? unpackStart(extracted) : extracted;
+      }
 
       case 'none':
-        return cleanedContent;
+        return unpackStart(cleanedContent);
 
       default:
         throw new Error(`Unsupported format specified: ${format}`);
@@ -132,12 +142,12 @@ export function parseResponse(
       const responseMatch = cleanedContent.match(/<response>([\s\S]*)/);
       if (responseMatch) {
         options.onRecovery?.(`XML response was malformed; recovered inner text via regex (parse error: ${error?.message ?? 'unknown'})`);
-        return responseMatch[1].replace(/<\/[\s\S]*$/, '').trim();
+        return unpackStart(responseMatch[1].replace(/<\/[\s\S]*$/, '').trim());
       }
       const jsonMatch = cleanedContent.match(/"response":\s*"([\s\S]*)/);
       if (jsonMatch) {
         options.onRecovery?.(`JSON response was malformed; recovered inner text via regex (parse error: ${error?.message ?? 'unknown'})`);
-        return jsonMatch[1].replace(/"\s*}\s*$/, '');
+        return unpackStart(jsonMatch[1].replace(/"\s*}\s*$/, ''));
       }
     }
 

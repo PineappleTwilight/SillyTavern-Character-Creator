@@ -107,6 +107,45 @@ describe('parseResponse with XML format', () => {
     const input2 = '<data>test</data>';
     expect(parseResponse(input2, 'xml')).toBe('test');
   });
+
+  test('preserves a single <START> example-dialogue marker in XML format', () => {
+    // given an XML response wrapping a mes_example with a single <START> chunk,
+    // when parsed, the <START> marker must survive intact (not be eaten as an XML tag)
+    const input =
+      '<response><START>\n{{user}}: Hi there.\n{{char}}: *waves* Hello.</response>';
+    expect(parseResponse(input, 'xml')).toBe(
+      '<START>\n{{user}}: Hi there.\n{{char}}: *waves* Hello.',
+    );
+  });
+
+  test('preserves multiple <START> chunks in XML format without losing content', () => {
+    // given an XML response with multiple <START> example chunks,
+    // when parsed, both chunks AND both markers must survive (the old parser silently dropped the first chunk)
+    const input =
+      '<response><START>\n{{user}}: First exchange.\n{{char}}: Reply one.\n\n<START>\n{{user}}: Second exchange.\n{{char}}: Reply two.</response>';
+    expect(parseResponse(input, 'xml')).toBe(
+      '<START>\n{{user}}: First exchange.\n{{char}}: Reply one.\n\n<START>\n{{user}}: Second exchange.\n{{char}}: Reply two.',
+    );
+  });
+
+  test('preserves <START> markers in JSON format responses', () => {
+    // given a JSON response with a <START> marker in the value,
+    // when parsed, the marker survives (JSON doesn't need pack/unpack but should still work)
+    const input = '{"response": "<START>\n{{user}}: Hi"}';
+    expect(parseResponse(input, 'json')).toBe('<START>\n{{user}}: Hi');
+  });
+
+  test('preserves <START> markers in plaintext (none) format', () => {
+    const input = '<START>\n{{user}}: Hi';
+    expect(parseResponse(input, 'none')).toBe('<START>\n{{user}}: Hi');
+  });
+
+  test('preserves <START> markers extracted from XML code blocks', () => {
+    // given a code-fenced XML response containing <START>,
+    // when parsed, the marker survives (pack/unpack runs on the cleaned code-block content)
+    const input = '```xml\n<response><START>\n{{user}}: Hi</response>\n```';
+    expect(parseResponse(input, 'xml')).toBe('<START>\n{{user}}: Hi');
+  });
 });
 
 describe('parseResponse with plaintext (none) format', () => {
