@@ -1146,7 +1146,7 @@ export const MainPopup: FC = () => {
           <div className="tab-content-area">
             {activeTab === 'core' && (
               <div className="card tab-content active">
-                <h3>Core Character Fields</h3>
+                <h3 className="crec-tab-section-title">Core Character Fields</h3>
                 {CHARACTER_FIELDS.map((fieldId) => {
                   const config = fieldConfigs[fieldId as keyof typeof fieldConfigs];
                   if (!config) return null;
@@ -1186,7 +1186,7 @@ export const MainPopup: FC = () => {
             )}
             {activeTab === 'draft' && (
               <div className="card tab-content active">
-                <h3>Draft Fields</h3>
+                <h3 className="crec-tab-section-title">Draft Fields</h3>
                 {Object.entries(session.draftFields).map(([fieldId, data]) => (
                   <CharacterField
                     key={fieldId}

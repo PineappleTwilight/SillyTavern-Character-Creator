@@ -1,5 +1,6 @@
 import { FC, useMemo } from 'react';
 import { STButton } from 'sillytavern-utils-lib/components/react';
+import { useTextareaResize } from '../hooks/useTextareaResize.js';
 
 export interface CharacterFieldProps {
   fieldId: string;
@@ -61,6 +62,8 @@ export const CharacterField: FC<CharacterFieldProps> = ({
 }) => {
   const charCount = useMemo(() => value.length, [value]);
   const canGenerate = !isGenerating;
+  const textareaRef = useTextareaResize(`value:${fieldId}`);
+  const promptTextareaRef = useTextareaResize(`prompt:${fieldId}`);
 
   return (
     <div
@@ -83,6 +86,7 @@ export const CharacterField: FC<CharacterFieldProps> = ({
       </div>
       <div className={`field-container ${large ? 'large-field' : ''}`}>
         <textarea
+          ref={textareaRef}
           className="text_pole crec-field-textarea"
           value={value}
           onChange={(e) => onValueChange(fieldId, e.target.value)}
@@ -127,6 +131,7 @@ export const CharacterField: FC<CharacterFieldProps> = ({
         <div className="field-prompt-container">
           <div className="field-prompt-label">Field-specific prompt</div>
           <textarea
+            ref={promptTextareaRef}
             className="text_pole crec-field-textarea crec-field-prompt-textarea"
             value={prompt}
             onChange={(e) => onPromptChange(fieldId, e.target.value)}

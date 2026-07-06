@@ -1,11 +1,14 @@
 import type { Session } from './generate.js';
 
 export const CHARACTER_SESSION_KEY = 'charCreator';
+export const CHARACTER_RESIZE_KEY = 'charCreatorResizeSizes';
+
+export type ResizeSizes = Record<string, number>;
 
 type LocalForageLike = {
-  getItem<T>(key: string): Promise<T | null>;
-  setItem<T>(key: string, value: T): Promise<T>;
-  removeItem(key: string): Promise<void>;
+    getItem<T>(key: string): Promise<T | null>;
+    setItem<T>(key: string, value: T): Promise<T>;
+    removeItem(key: string): Promise<void>;
 };
 
 type LegacyStorageLike = Pick<Storage, 'getItem' | 'removeItem'>;
@@ -77,12 +80,23 @@ const saveValue = async <T>(
 };
 
 export const loadCharacterSession = (
-  storage: LocalForageLike = getStorage(),
-  legacyStorage: LegacyStorageLike = localStorage,
+    storage: LocalForageLike = getStorage(),
+    legacyStorage: LegacyStorageLike = localStorage,
 ): Promise<StorageLoadResult<Partial<Session>>> =>
-  loadWithLegacyMigration<Partial<Session>>(CHARACTER_SESSION_KEY, storage, legacyStorage);
+    loadWithLegacyMigration<Partial<Session>>(CHARACTER_SESSION_KEY, storage, legacyStorage);
 
 export const saveCharacterSession = (
-  session: Session,
-  storage: LocalForageLike = getStorage(),
+    session: Session,
+    storage: LocalForageLike = getStorage(),
 ): Promise<StorageSaveResult> => saveValue(CHARACTER_SESSION_KEY, session, storage);
+
+export const loadResizeSizes = (
+    storage: LocalForageLike = getStorage(),
+    legacyStorage: LegacyStorageLike = localStorage,
+): Promise<StorageLoadResult<ResizeSizes>> =>
+    loadWithLegacyMigration<ResizeSizes>(CHARACTER_RESIZE_KEY, storage, legacyStorage);
+
+export const saveResizeSizes = (
+    sizes: ResizeSizes,
+    storage: LocalForageLike = getStorage(),
+): Promise<StorageSaveResult> => saveValue(CHARACTER_RESIZE_KEY, sizes, storage);
