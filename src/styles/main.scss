@@ -8,23 +8,47 @@
     }
 }
 
+/* === Widen the ST popup container that wraps our extension popup === */
+.popup:has(#charCreatorPopup) {
+    width: min(1400px, 95vw) !important;
+    max-width: 95vw !important;
+}
+
+/* ST new popup layout */
+.dialogue-popup:has(#charCreatorPopup) {
+    width: min(1400px, 95vw) !important;
+    max-width: 95vw !important;
+    max-height: 92vh !important;
+}
+
 /* Ensure popup content is scrollable */
 .popup-content:has(#charCreatorPopup) {
     overflow-y: auto;
+    max-width: 100%;
 }
 
 #charCreatorPopup {
     color: var(--SmartThemeBodyColor);
     font-family: var(--mainFontFamily);
-    max-width: 1200px;
+    width: 100%;
     margin: 0 auto;
     font-size: var(--mainFontSize);
+    box-sizing: border-box;
+
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+    }
 
     h2 {
         text-align: left;
         margin: 0;
         font-weight: 600;
         color: var(--SmartThemeBodyColor);
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
     }
 
     h3 {
@@ -49,13 +73,57 @@
 
 #charCreatorPopup .crec-popup-head {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
     gap: 12px;
-    padding: 12px 4px;
+    padding: 0 0 14px 0;
     border-bottom: 1px solid var(--SmartThemeBorderColor);
     margin-bottom: 16px;
-    flex-wrap: wrap;
+
+    .crec-title-row {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
+
+        h2 {
+            margin: 0;
+            font-size: 1.5em;
+
+            .crec-title-icon {
+                color: var(--SmartThemeEmColor);
+                font-size: 0.85em;
+            }
+        }
+
+        .crec-character-subtitle {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 6px;
+            font-size: 0.95em;
+            padding: 3px 10px;
+            border-radius: 14px;
+            background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 65%, var(--black100) 35%);
+            border: 1px solid var(--SmartThemeBorderColor);
+            color: var(--SmartThemeBodyColor);
+
+            .crec-character-subtitle-label {
+                color: var(--SmartThemeEmColor);
+                font-size: 0.85em;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
+
+            .crec-character-subtitle-name {
+                font-weight: 600;
+            }
+
+            .crec-character-subtitle-placeholder {
+                color: var(--SmartThemeEmColor);
+                font-style: italic;
+            }
+        }
+    }
 
     .crec-toolbar {
         display: flex;
@@ -63,24 +131,31 @@
         flex-wrap: wrap;
         align-items: center;
 
-        button,
-        .menu_button,
-        [class*="menu_button"] {
-            padding: 6px 12px;
-            background-color: var(--SmartThemeBlurTintColor);
+        > button,
+        > .menu_button,
+        > [class*="menu_button"],
+        .crec-toolbar-button {
+            padding: 7px 12px;
+            min-height: 34px;
+            background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 85%, var(--black100) 15%);
             border: 1px solid var(--SmartThemeBorderColor);
             border-radius: 6px;
             color: var(--SmartThemeBodyColor);
             font-size: 0.9em;
             cursor: pointer;
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
+            transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
             display: inline-flex;
             align-items: center;
             gap: 6px;
+            line-height: 1.2;
 
             &:hover:not(:disabled) {
-                transform: translateY(-1px);
-                box-shadow: 0 2px 4px var(--SmartThemeShadowColor);
+                background-color: color-mix(in srgb, var(--white30a) 35%, var(--SmartThemeBlurTintColor));
+                border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 50%, var(--white100) 50%);
+            }
+
+            &:active:not(:disabled) {
+                transform: translateY(1px);
             }
         }
     }
@@ -96,7 +171,7 @@
 }
 
 #charCreatorPopup .column {
-    width: 30%;
+    width: 38%;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -107,7 +182,7 @@
 }
 
 #charCreatorPopup .wide-column {
-    width: 70%;
+    width: 62%;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -136,21 +211,55 @@
         padding: 12px 14px;
         cursor: pointer;
         user-select: none;
-        transition: background-color 0.15s ease;
+        transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+        border-radius: 8px;
+        background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 92%, var(--black100) 8%);
+        border: 1px solid var(--SmartThemeBorderColor);
+        outline: none;
 
         &:hover {
-            background-color: color-mix(in srgb, var(--white30a) 50%, transparent);
+            background-color: color-mix(in srgb, var(--white30a) 30%, var(--SmartThemeBlurTintColor));
+            border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 50%, var(--white100) 50%);
         }
 
-        i {
-            color: var(--SmartThemeEmColor);
-            font-size: 0.85em;
+        &:focus-visible {
+            border-color: var(--active, #68b030);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--active, #68b030) 40%, transparent);
         }
+
+        &:active {
+            transform: translateY(1px);
+        }
+
+        h3 {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1em;
+            margin: 0;
+        }
+
+        .crec-card-section-icon {
+            color: var(--SmartThemeEmColor);
+            font-size: 0.9em;
+            width: 1em;
+            text-align: center;
+        }
+
+        .crec-card-chevron {
+            color: var(--SmartThemeEmColor);
+            font-size: 0.9em;
+            transition: transform 0.2s ease;
+        }
+    }
+
+    .crec-collapsible:not(.expanded) .crec-card-body {
+        display: none;
     }
 
     .crec-card-body {
         padding: 14px;
-        padding-top: 0;
+        padding-top: 12px;
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -204,11 +313,12 @@
 #charCreatorPopup .tab-buttons {
     display: flex;
     gap: 10px;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
     border-bottom: 1px solid var(--SmartThemeBorderColor);
-    padding-bottom: 10px;
+    padding-bottom: 12px;
     align-items: center;
     justify-content: flex-start;
+    flex-wrap: wrap;
 
     .right-aligned {
         margin-left: auto;
@@ -222,20 +332,45 @@
     }
 
     .tab-button {
-        background-color: transparent;
-        border: none;
+        background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 80%, var(--black100) 20%);
+        border: 1px solid var(--SmartThemeBorderColor);
         border-bottom: 3px solid transparent;
-        padding: 8px 15px;
+        padding: 8px 16px;
         cursor: pointer;
-        transition: all 0.2s ease;
-        border-radius: 4px 4px 0 0;
+        transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+        border-radius: 6px 6px 4px 4px;
+        color: var(--SmartThemeBodyColor);
+        font-size: 0.95em;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        line-height: 1.2;
+        font-family: inherit;
+
+        i {
+            color: var(--SmartThemeEmColor);
+            font-size: 0.9em;
+        }
 
         &:hover {
-            background-color: var(--white30a);
+            background-color: color-mix(in srgb, var(--white30a) 30%, var(--SmartThemeBlurTintColor));
+            border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 60%, var(--white100) 40%);
+        }
+
+        &:active {
+            transform: translateY(1px);
         }
 
         &.active {
-            font-weight: 500;
+            font-weight: 600;
+            background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 95%, var(--white100) 5%);
+            border-color: var(--SmartThemeBorderColor);
+            border-bottom: 3px solid var(--active, #68b030);
+            color: var(--SmartThemeBodyColor);
+
+            i {
+                color: var(--active, #68b030);
+            }
         }
     }
 }
@@ -265,7 +400,9 @@
         margin-bottom: 6px;
 
         label {
-            display: block;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
             font-weight: 600;
             color: var(--SmartThemeBodyColor);
         }
@@ -353,6 +490,35 @@
             font-size: 0.88em;
             background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 80%, var(--black100) 20%);
         }
+    }
+}
+
+/* Primary (Name) field — visually prominent hero treatment */
+#charCreatorPopup .character-field.character-field-primary {
+    padding: 16px;
+    border-width: 2px;
+    border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 70%, var(--active, #68b030) 30%);
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 95%, var(--active, #68b030) 5%);
+
+    .character-field-label-row {
+        margin-bottom: 10px;
+
+        label {
+            font-size: 1.15em;
+            font-weight: 700;
+        }
+
+        .crec-primary-icon {
+            color: var(--active, #68b030);
+            font-size: 0.85em;
+        }
+    }
+
+    .field-container .crec-field-textarea {
+        min-height: 70px;
+        font-size: 1.05em;
+        padding: 12px;
+        border-width: 2px;
     }
 }
 

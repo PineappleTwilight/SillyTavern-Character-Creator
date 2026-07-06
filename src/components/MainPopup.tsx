@@ -46,7 +46,7 @@ const createDefaultSession = (): Session => ({
 });
 
 const fieldConfigs = {
-  name: { label: CHARACTER_LABELS.name, rows: 1, large: false, promptEnabled: false },
+  name: { label: CHARACTER_LABELS.name, rows: 2, large: false, promptEnabled: false, primary: true },
   description: { label: CHARACTER_LABELS.description, rows: 5, large: true, promptEnabled: true },
   personality: { label: CHARACTER_LABELS.personality, rows: 4, large: true, promptEnabled: true },
   scenario: { label: CHARACTER_LABELS.scenario, rows: 3, large: true, promptEnabled: true },
@@ -658,7 +658,27 @@ export const MainPopup: FC = () => {
   return (
     <div id="charCreatorPopup">
       <div className="crec-popup-head">
-        <h2>Character Creator</h2>
+        <div className="crec-title-row">
+          <h2>
+            <i className="fa-solid fa-user-astronaut crec-title-icon" aria-hidden="true" />
+            Character Creator
+          </h2>
+          <div className="crec-character-subtitle" title="Active character for this card">
+            {loadedCharacter ? (
+              <>
+                <span className="crec-character-subtitle-label">Editing:</span>{' '}
+                <span className="crec-character-subtitle-name">{session.fields.name.value || loadedCharacter.name}</span>
+              </>
+            ) : session.fields.name.value ? (
+              <>
+                <span className="crec-character-subtitle-label">New character:</span>{' '}
+                <span className="crec-character-subtitle-name">{session.fields.name.value}</span>
+              </>
+            ) : (
+              <span className="crec-character-subtitle-placeholder">Untitled character</span>
+            )}
+          </div>
+        </div>
         <div className="crec-toolbar">
           <STButton onClick={handleGenerateAll} disabled={generatingAll} title="Generate every core field in sequence">
             {generatingAll ? (
@@ -738,10 +758,23 @@ export const MainPopup: FC = () => {
       <div className="container">
         {/* Left Column - Configuration */}
         <div className="column">
-          <div className="card crec-collapsible">
-            <div className="crec-card-head" onClick={() => toggleSection('profile')}>
-              <h3>Connection Profile</h3>
-              <i className={`fa-solid ${collapsed.profile ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+          <div className={`card crec-collapsible ${collapsed.profile ? '' : 'expanded'}`}>
+            <div
+              className="crec-card-head"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSection('profile')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleSection('profile');
+                }
+              }}
+            >
+              <h3>
+                <i className="fa-solid fa-plug crec-card-section-icon" aria-hidden="true" /> Connection Profile
+              </h3>
+              <i className={`fa-solid crec-card-chevron ${collapsed.profile ? 'fa-chevron-right' : 'fa-chevron-down'}`} />
             </div>
             {!collapsed.profile && (
               <div className="crec-card-body">
@@ -753,10 +786,23 @@ export const MainPopup: FC = () => {
             )}
           </div>
 
-          <div className="card crec-collapsible">
-            <div className="crec-card-head" onClick={() => toggleSection('context')}>
-              <h3>Context to Send</h3>
-              <i className={`fa-solid ${collapsed.context ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+          <div className={`card crec-collapsible ${collapsed.context ? '' : 'expanded'}`}>
+            <div
+              className="crec-card-head"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSection('context')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleSection('context');
+                }
+              }}
+            >
+              <h3>
+                <i className="fa-solid fa-circle-info crec-card-section-icon" aria-hidden="true" /> Context to Send
+              </h3>
+              <i className={`fa-solid crec-card-chevron ${collapsed.context ? 'fa-chevron-right' : 'fa-chevron-down'}`} />
             </div>
             {!collapsed.context && (
               <div className="crec-card-body context-options">
@@ -929,10 +975,23 @@ export const MainPopup: FC = () => {
             )}
           </div>
 
-          <div className="card crec-collapsible">
-            <div className="crec-card-head" onClick={() => toggleSection('options')}>
-              <h3>Generation Options</h3>
-              <i className={`fa-solid ${collapsed.options ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+          <div className={`card crec-collapsible ${collapsed.options ? '' : 'expanded'}`}>
+            <div
+              className="crec-card-head"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSection('options')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleSection('options');
+                }
+              }}
+            >
+              <h3>
+                <i className="fa-solid fa-sliders crec-card-section-icon" aria-hidden="true" /> Generation Options
+              </h3>
+              <i className={`fa-solid crec-card-chevron ${collapsed.options ? 'fa-chevron-right' : 'fa-chevron-down'}`} />
             </div>
             {!collapsed.options && (
               <div className="crec-card-body">
@@ -999,10 +1058,25 @@ export const MainPopup: FC = () => {
             )}
           </div>
 
-          <div className="card crec-collapsible">
-            <div className="crec-card-head" onClick={() => toggleSection('instructions')}>
-              <h3>Additional Instructions</h3>
-              <i className={`fa-solid ${collapsed.instructions ? 'fa-chevron-down' : 'fa-chevron-up'}`} />
+          <div className={`card crec-collapsible ${collapsed.instructions ? '' : 'expanded'}`}>
+            <div
+              className="crec-card-head"
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSection('instructions')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleSection('instructions');
+                }
+              }}
+            >
+              <h3>
+                <i className="fa-solid fa-pen crec-card-section-icon" aria-hidden="true" /> Additional Instructions
+              </h3>
+              <i
+                className={`fa-solid crec-card-chevron ${collapsed.instructions ? 'fa-chevron-right' : 'fa-chevron-down'}`}
+              />
             </div>
             {!collapsed.instructions && (
               <div className="crec-card-body">
@@ -1043,18 +1117,20 @@ export const MainPopup: FC = () => {
         {/* Right Column - Fields */}
         <div className="wide-column">
           <div className="tab-buttons">
-            <STButton
+            <button
+              type="button"
               onClick={() => setActiveTab('core')}
-              className={`menu_button tab-button ${activeTab === 'core' ? 'active' : ''}`}
+              className={`tab-button ${activeTab === 'core' ? 'active' : ''}`}
             >
-              Core Fields
-            </STButton>
-            <STButton
+              <i className="fa-solid fa-file-lines" aria-hidden="true" /> Core Fields
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveTab('draft')}
-              className={`menu_button tab-button ${activeTab === 'draft' ? 'active' : ''}`}
+              className={`tab-button ${activeTab === 'draft' ? 'active' : ''}`}
             >
-              Draft Fields
-            </STButton>
+              <i className="fa-solid fa-pen-to-square" aria-hidden="true" /> Draft Fields
+            </button>
             <div className="right-aligned">
               {activeTab === 'draft' && (
                 <>
@@ -1084,6 +1160,7 @@ export const MainPopup: FC = () => {
                       large={config.large}
                       rows={config.rows}
                       promptEnabled={config.promptEnabled}
+                      primary={(config as any).primary}
                       isGenerating={isGenerating.includes(fieldId)}
                       isDebug={debugEnabled}
                       onValueChange={(id, v) => handleFieldChange(id, v, 'value', false)}

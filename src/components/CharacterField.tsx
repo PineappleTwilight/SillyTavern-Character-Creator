@@ -12,6 +12,7 @@ export interface CharacterFieldProps {
   isDraft?: boolean;
   isGenerating?: boolean;
   isDebug?: boolean;
+  primary?: boolean;
   onValueChange: (fieldId: string, newValue: string) => void;
   onPromptChange: (fieldId: string, newPrompt: string) => void;
   onGenerate: (fieldId: string) => void;
@@ -48,6 +49,7 @@ export const CharacterField: FC<CharacterFieldProps> = ({
   isDraft = false,
   isGenerating = false,
   isDebug = false,
+  primary = false,
   onValueChange,
   onPromptChange,
   onGenerate,
@@ -61,9 +63,14 @@ export const CharacterField: FC<CharacterFieldProps> = ({
   const canGenerate = !isGenerating;
 
   return (
-    <div className={`character-field ${isDraft ? 'draft-field' : 'core-field'}`}>
+    <div
+      className={`character-field ${isDraft ? 'draft-field' : 'core-field'} ${primary ? 'character-field-primary' : ''}`}
+    >
       <div className="character-field-label-row">
-        <label>{label}</label>
+        <label>
+          {primary && <i className="fa-solid fa-user crec-primary-icon" aria-hidden="true" />}
+          {label}
+        </label>
         {isGenerating ? (
           <span className="character-field-status">
             <i className="fa-solid fa-spinner fa-spin" /> generating…
