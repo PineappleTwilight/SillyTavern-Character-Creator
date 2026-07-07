@@ -6,6 +6,7 @@ import { WIEntry } from 'sillytavern-utils-lib/types/world-info';
 import { name1, st_echo } from 'sillytavern-utils-lib/config';
 import { MessageRole, OutputFormat, settingsManager } from './settings.js';
 import { DEFAULT_SETTINGS } from './settings.js';
+import { DEFAULT_FIELD_MAX_RESPONSE_TOKENS, resolveMaxResponseTokens } from './field-tokens.js';
 
 import * as Handlebars from 'handlebars';
 import './handlebars-helpers.js';
@@ -46,39 +47,8 @@ export const FIELD_GUIDANCE: Record<string, string> = {
     'A 2-3 turn style guide (~300-600 words / ~500 tokens) showing how the character speaks and acts. Separate example chunks with a `<START>` line. Use {{user}} and {{char}}. Mix *asterisk actions* with dialogue. Strong example: `<START>\\n{{user}}: "What makes you think your plan will work?"\\n{{char}}: *A slow, confident smirk spreads across her face as she leans back in her chair, boots resting on the scarred metal desk.* "Because I accounted for every variable. Especially the human one—your greed."\\n\\n{{user}}: "I\'m not sure I can do this."\\n{{char}}: *Her expression softens for a brief moment. She places a reassuring hand on {{user}}\'s shoulder, her calloused fingers a surprising comfort.* "Fear is just a signal. It tells you what you need to protect. Now, let\'s protect it together."`',
 };
 
-export const DEFAULT_FIELD_MAX_RESPONSE_TOKENS: Record<string, number> = {
-  name: 128,
-  description: 768,
-  personality: 768,
-  scenario: 512,
-  first_mes: 1024,
-  mes_example: 2048,
-};
+export { DEFAULT_FIELD_MAX_RESPONSE_TOKENS, resolveMaxResponseTokens };
 
-/**
- * Resolve the response-token budget for a generation.
- * Lookup order (first defined wins):
- *   1. User per-field override map (overrides[targetField])
- *   2. Built-in per-field default (DEFAULT_FIELD_MAX_RESPONSE_TOKENS)
- *   3. Legacy global fallback (maxResponseToken setting, default 1024)
- * Unknown/draft fields fall through to (3) — preserves pre-existing behavior
- * unless the user explicitly opted into per-field overrides.
- */
-export function resolveMaxResponseTokens(
-  targetField: string,
-  globalMaxResponseToken: number,
-  overrides?: Record<string, number>,
-): number {
-  const direct = overrides?.[targetField];
-  if (typeof direct === 'number' && Number.isFinite(direct) && direct > 0) {
-    return Math.floor(direct);
-  }
-  const defaultForField = DEFAULT_FIELD_MAX_RESPONSE_TOKENS[targetField];
-  if (typeof defaultForField === 'number' && Number.isFinite(defaultForField) && defaultForField > 0) {
-    return defaultForField;
-  }
-  return globalMaxResponseToken;
-}
 
 export interface CharacterField {
   prompt: string;
@@ -100,6 +70,7 @@ export interface DebugCapture {
   targetField: string;
   outputFormat: OutputFormat;
   continueFrom?: string;
+  generationMode?: GenerationMode;
   messages: { role: MessageRole; content: string }[];
   rawResponse: string;
   parsedContent: string;
@@ -108,11 +79,15 @@ export interface DebugCapture {
   profileId: string;
 }
 
+export type GenerationMode = 'generate' | 'continue' | 'revise' | 'improve';
+
 export interface RunCharacterFieldGenerationParams {
   profileId: string;
   userPrompt: string;
   buildPromptOptions: BuildPromptOptions;
   continueFrom?: string;
+  generationMode?: GenerationMode;
+  existingContent?: string;
   session: Session;
   allCharacters: Character[];
   entriesGroupByWorldName: Record<string, WIEntry[]>;
@@ -142,6 +117,8 @@ export async function runCharacterFieldGeneration({
   userPrompt,
   buildPromptOptions,
   continueFrom,
+  generationMode = 'generate',
+  existingContent,
   session,
   allCharacters,
   entriesGroupByWorldName,
@@ -349,6 +326,9 @@ export async function runCharacterFieldGeneration({
 
   const messages: Message[] = [];
   const sentMessages: { role: MessageRole; content: string }[] = [];
+  const existing = existingContent ?? continueFrom;
+  const effectiveMode: GenerationMode = continueFrom && generationMode === 'generate' ? 'continue' : generationMode;
+  const isContinueMode = effectiveMode === 'continue' && !!existing;
   {
     for (const mainContext of mainContextList) {
       // Chat history is exception, since it is not a template
@@ -392,14 +372,30 @@ export async function runCharacterFieldGeneration({
       }
     }
 
-    // If we're continuing from previous content, add it as an assistant message
-    if (continueFrom) {
-      const prefilled = getPrefilled(continueFrom, outputFormat);
+    if (isContinueMode && existing) {
+      const prefilled = getPrefilled(existing, outputFormat);
       messages.push({
         role: 'assistant',
         content: prefilled,
       });
       sentMessages.push({ role: 'assistant', content: prefilled });
+    } else if ((effectiveMode === 'revise' || effectiveMode === 'improve') && existing) {
+      const reviseInstruction =
+        effectiveMode === 'revise'
+          ? (templateData['fieldSpecificInstructions'] as string | undefined)?.trim()
+          : '';
+      const directive =
+        effectiveMode === 'improve'
+          ? 'Rewrite the existing content below to improve its quality, clarity, internal consistency, and stylistic polish. Preserve the original intent, facts, and character voice. Do not introduce new facts, traits, or relationships that are not already implied. Return only the rewritten content, in the same output format as the existing content.'
+          : `Revise the existing content below per the user's direction. Stay faithful to intent and facts already established; only change what the feedback asks for. Return only the revised content, in the same output format as the existing content.\n\nUser's revision direction:\n${reviseInstruction || '(no specific direction given — clean up and tighten only)'}`;
+      messages.push({
+        role: 'user',
+        content: `${directive}\n\n--- EXISTING CONTENT ---\n${existing}\n--- END EXISTING CONTENT ---`,
+      });
+      sentMessages.push({
+        role: 'user',
+        content: `${directive}\n\n--- EXISTING CONTENT ---\n${existing}\n--- END EXISTING CONTENT ---`,
+      });
     }
   }
 
@@ -413,7 +409,7 @@ export async function runCharacterFieldGeneration({
 
   // For "continue" requests, the model only returns the new part.
   // We must combine the start of the structure with the model's completion to parse it correctly.
-  const contentToParse = continueFrom ? getPrefilled(continueFrom, outputFormat) + response.content : response.content;
+  const contentToParse = isContinueMode && existing ? getPrefilled(existing, outputFormat) + response.content : response.content;
 
   const result = parseResponse(contentToParse, outputFormat, {
     onRecovery: (reason) => {
@@ -442,6 +438,7 @@ export async function runCharacterFieldGeneration({
         targetField,
         outputFormat,
         continueFrom,
+        generationMode: effectiveMode,
         messages: sentMessages,
         rawResponse: response.content,
         parsedContent: finalContent,

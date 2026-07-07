@@ -17,7 +17,7 @@ import { WIEntry } from 'sillytavern-utils-lib/types/world-info';
 import * as Handlebars from 'handlebars';
 import '../handlebars-helpers.js';
 
-import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS, DEFAULT_FIELD_MAX_RESPONSE_TOKENS, DebugCapture } from '../generate.js';
+import { runCharacterFieldGeneration, Session, CHARACTER_FIELDS, CHARACTER_LABELS, DEFAULT_FIELD_MAX_RESPONSE_TOKENS, GenerationMode, DebugCapture } from '../generate.js';
 import { ExtensionSettings, settingsManager, convertToVariableName, VERSION } from '../settings.js';
 import { useForceUpdate } from '../hooks/useForceUpdate.js';
 import { CharacterField } from './CharacterField.js';
@@ -72,6 +72,7 @@ export const MainPopup: FC = () => {
   const [debugCapture, setDebugCapture] = useState<DebugMap>({});
   const [openDebugFor, setOpenDebugFor] = useState<string | null>(null);
   const [generatingAll, setGeneratingAll] = useState(false);
+  const [undoStack, setUndoStack] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState({
     profile: false,
     context: true,
@@ -299,7 +300,7 @@ export const MainPopup: FC = () => {
   }, [settings, session.selectedCharacterIndexes, session.selectedWorldNames]);
 
   const runGeneration = useCallback(
-    async (targetField: string, continueFrom?: string): Promise<string> => {
+    async (targetField: string, mode: GenerationMode = 'generate', continueFrom?: string): Promise<string> => {
       if (!settings.profileId) {
         throw new Error('No connection profile selected.');
       }
@@ -318,7 +319,9 @@ export const MainPopup: FC = () => {
         profileId: settings.profileId,
         userPrompt: settings.promptPresets[settings.promptPreset].content,
         buildPromptOptions,
-        continueFrom,
+        continueFrom: mode === 'continue' ? continueFrom : undefined,
+        generationMode: mode,
+        existingContent: mode === 'revise' || mode === 'improve' || mode === 'continue' ? continueFrom : undefined,
         session,
         allCharacters,
         entriesGroupByWorldName,
@@ -345,13 +348,49 @@ export const MainPopup: FC = () => {
   );
 
   const handleGenerate = useCallback(
-    async (targetField: string, continueFrom?: string) => {
+    async (targetField: string, modeOrContinueFrom?: GenerationMode | string, maybeContinue?: string) => {
+      const mode: GenerationMode =
+        typeof modeOrContinueFrom === 'string' &&
+        (modeOrContinueFrom === 'generate' ||
+          modeOrContinueFrom === 'continue' ||
+          modeOrContinueFrom === 'revise' ||
+          modeOrContinueFrom === 'improve')
+          ? (modeOrContinueFrom as GenerationMode)
+          : 'generate';
+      let continueFrom = '';
+      if (typeof modeOrContinueFrom === 'string' && mode === 'generate' && modeOrContinueFrom !== 'generate') {
+        continueFrom = modeOrContinueFrom;
+      } else if (typeof maybeContinue === 'string') {
+        continueFrom = maybeContinue;
+      }
+      const isGreeting = targetField.startsWith('alternate_greetings_');
+      const isDraft = !isGreeting && !CHARACTER_FIELDS.includes(targetField as any);
+      const fieldGroup = isDraft ? 'draftFields' : 'fields';
+
+      if (mode !== 'generate' && !continueFrom) {
+        const currentValue = session.fields[targetField]?.value ?? session.draftFields[targetField]?.value;
+        if (!currentValue) return;
+        continueFrom = currentValue;
+      }
+
+      setUndoStack((prev) => {
+        const key = `${fieldGroup}:${targetField}`;
+        if (prev[key] !== undefined) return prev;
+        const prevValue =
+          session.fields[targetField]?.value ??
+          session.draftFields[targetField]?.value ??
+          '';
+        return { ...prev, [key]: prevValue };
+      });
+
       setIsGenerating((prev) => [...prev, targetField]);
       try {
-        const generatedContent = await runGeneration(targetField, continueFrom);
+        const generatedContent = await runGeneration(
+          targetField,
+          mode,
+          mode === 'generate' ? undefined : continueFrom,
+        );
 
-        const isGreeting = targetField.startsWith('alternate_greetings_');
-        const isDraft = !isGreeting && !CHARACTER_FIELDS.includes(targetField as any);
         if (isGreeting) {
           const index = parseInt(targetField.split('_')[2]) - 1;
           const newGreetings = [...greetings];
@@ -367,7 +406,39 @@ export const MainPopup: FC = () => {
         setIsGenerating((prev) => prev.filter((id) => id !== targetField));
       }
     },
-    [runGeneration, greetings, handleFieldChange, handleGreetingsChange],
+    [runGeneration, greetings, handleFieldChange, handleGreetingsChange, session.fields, session.draftFields],
+  );
+
+  const handleUndo = useCallback(
+    (targetField: string, isDraft: boolean) => {
+      const fieldGroup = isDraft ? 'draftFields' : 'fields';
+      const key = `${fieldGroup}:${targetField}`;
+      const prevValue = undoStack[key];
+      if (prevValue === undefined) return;
+      const isGreeting = targetField.startsWith('alternate_greetings_');
+      if (isGreeting) {
+        const index = parseInt(targetField.split('_')[2]) - 1;
+        const newGreetings = [...greetings];
+        if (newGreetings[index]) newGreetings[index].value = prevValue;
+        handleGreetingsChange(newGreetings);
+      } else {
+        handleFieldChange(targetField, prevValue, 'value', isDraft);
+      }
+      setUndoStack((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    },
+    [undoStack, greetings, handleFieldChange, handleGreetingsChange],
+  );
+
+  const canUndo = useCallback(
+    (targetField: string, isDraft: boolean) => {
+      const fieldGroup = isDraft ? 'draftFields' : 'fields';
+      return undoStack[`${fieldGroup}:${targetField}`] !== undefined;
+    },
+    [undoStack],
   );
 
   const handleGenerateAll = useCallback(async () => {
@@ -410,6 +481,7 @@ export const MainPopup: FC = () => {
       setSession(createDefaultSession());
       setLoadedCharacter(null);
       setDebugCapture({});
+      setUndoStack({});
     }
   }, []);
 
@@ -1212,10 +1284,11 @@ export const MainPopup: FC = () => {
                       primary={(config as any).primary}
                       isGenerating={isGenerating.includes(fieldId)}
                       isDebug={debugEnabled}
+                      canUndo={canUndo(fieldId, false)}
                       onValueChange={(id, v) => handleFieldChange(id, v, 'value', false)}
                       onPromptChange={(id, p) => handleFieldChange(id, p, 'prompt', false)}
                       onGenerate={handleGenerate}
-                      onContinue={(id) => handleGenerate(id, session.fields[id].value)}
+                      onUndo={(id) => handleUndo(id, false)}
                       onClear={(id) => handleClearField(id, false)}
                       onCompare={handleCompare}
                       onShowDebug={(id) => setOpenDebugFor(id)}
@@ -1226,8 +1299,15 @@ export const MainPopup: FC = () => {
                   greetings={greetings}
                   onGreetingsChange={handleGreetingsChange}
                   isGenerating={isGenerating.some((id) => id.startsWith('alternate_greetings_'))}
-                  onGenerate={(i) => handleGenerate(`alternate_greetings_${i + 1}`)}
-                  onContinue={(i) => handleGenerate(`alternate_greetings_${i + 1}`, greetings[i].value)}
+                  onGenerate={(i, mode, continueFrom) =>
+                    handleGenerate(
+                      `alternate_greetings_${i + 1}`,
+                      mode ?? 'generate',
+                      continueFrom ?? (mode && mode !== 'generate' ? greetings[i]?.value : undefined),
+                    )
+                  }
+                  onUndo={(i) => handleUndo(`alternate_greetings_${i + 1}`, false)}
+                  canUndo={(i) => canUndo(`alternate_greetings_${i + 1}`, false)}
                   onCompare={handleCompare}
                   onShowDebug={(id) => setOpenDebugFor(id)}
                 />
@@ -1247,10 +1327,11 @@ export const MainPopup: FC = () => {
                     rows={5}
                     isGenerating={isGenerating.includes(fieldId)}
                     isDebug={debugEnabled}
+                    canUndo={canUndo(fieldId, true)}
                     onValueChange={(id, v) => handleFieldChange(id, v, 'value', true)}
                     onPromptChange={(id, p) => handleFieldChange(id, p, 'prompt', true)}
                     onGenerate={handleGenerate}
-                    onContinue={(id) => handleGenerate(id, session.draftFields[id].value)}
+                    onUndo={(id) => handleUndo(id, true)}
                     onClear={(id) => handleClearField(id, true)}
                     onDelete={handleDeleteDraftField}
                     onShowDebug={(id) => setOpenDebugFor(id)}

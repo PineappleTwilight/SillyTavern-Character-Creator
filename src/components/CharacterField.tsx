@@ -1,5 +1,6 @@
 import { FC, useMemo } from 'react';
 import { STButton } from 'sillytavern-utils-lib/components/react';
+import { GenerationMode } from '../generate.js';
 import { useTextareaResize } from '../hooks/useTextareaResize.js';
 
 export interface CharacterFieldProps {
@@ -14,10 +15,11 @@ export interface CharacterFieldProps {
   isGenerating?: boolean;
   isDebug?: boolean;
   primary?: boolean;
+  canUndo?: boolean;
   onValueChange: (fieldId: string, newValue: string) => void;
   onPromptChange: (fieldId: string, newPrompt: string) => void;
-  onGenerate: (fieldId: string) => void;
-  onContinue: (fieldId: string) => void;
+  onGenerate: (fieldId: string, mode?: GenerationMode, continueFrom?: string) => void;
+  onUndo: (fieldId: string) => void;
   onClear: (fieldId: string) => void;
   onCompare?: (fieldId: string) => void;
   onDelete?: (fieldId: string) => void;
@@ -51,17 +53,19 @@ export const CharacterField: FC<CharacterFieldProps> = ({
   isGenerating = false,
   isDebug = false,
   primary = false,
+  canUndo = false,
   onValueChange,
   onPromptChange,
   onGenerate,
-  onContinue,
+  onUndo,
   onClear,
   onCompare,
   onDelete,
   onShowDebug,
 }) => {
   const charCount = useMemo(() => value.length, [value]);
-  const canGenerate = !isGenerating;
+  const canRun = !isGenerating;
+  const hasValue = value.trim().length > 0;
   const textareaRef = useTextareaResize(`value:${fieldId}`);
   const promptTextareaRef = useTextareaResize(`prompt:${fieldId}`);
 
@@ -94,16 +98,63 @@ export const CharacterField: FC<CharacterFieldProps> = ({
           placeholder={`Enter ${label.toLowerCase()}…`}
         />
         <div className="field-actions">
-          <STButton onClick={() => onGenerate(fieldId)} disabled={!canGenerate} title="Generate field content">
-            {isGenerating ? (
-              <i className="fa-solid fa-spinner fa-spin"></i>
-            ) : (
-              <i className="fa-solid fa-wand-magic-sparkles"></i>
-            )}
-          </STButton>
-          <STButton onClick={() => onContinue(fieldId)} disabled={!canGenerate} title="Continue from current content">
-            <i className="fa-solid fa-arrow-right"></i>
-          </STButton>
+          {!hasValue ? (
+            <STButton
+              onClick={() => onGenerate(fieldId, 'generate')}
+              disabled={!canRun}
+              title="Generate field content from scratch"
+              className="crec-btn-generate-primary"
+            >
+              {isGenerating ? (
+                <i className="fa-solid fa-spinner fa-spin"></i>
+              ) : (
+                <>
+                  <i className="fa-solid fa-wand-magic-sparkles"></i>
+                  <span className="crec-btn-label">Generate</span>
+                </>
+              )}
+            </STButton>
+          ) : (
+            <>
+              <STButton
+                onClick={() => onGenerate(fieldId, 'continue', value)}
+                disabled={!canRun}
+                title="Continue from current content (append)"
+                className="crec-btn-secondary"
+              >
+                <i className="fa-solid fa-arrow-right"></i>
+                <span className="crec-btn-label">Continue</span>
+              </STButton>
+              <STButton
+                onClick={() => onGenerate(fieldId, 'revise', value)}
+                disabled={!canRun}
+                title="Revise using the field-specific prompt below as your feedback direction"
+                className="crec-btn-secondary"
+              >
+                <i className="fa-solid fa-pen"></i>
+                <span className="crec-btn-label">Revise</span>
+              </STButton>
+              <STButton
+                onClick={() => onGenerate(fieldId, 'improve', value)}
+                disabled={!canRun}
+                title="Improve quality, clarity, and consistency without changing intent (no direction needed)"
+                className="crec-btn-secondary"
+              >
+                <i className="fa-solid fa-wand-sparkles"></i>
+                <span className="crec-btn-label">Improve</span>
+              </STButton>
+            </>
+          )}
+          {canUndo && (
+            <STButton
+              onClick={() => onUndo(fieldId)}
+              disabled={!canRun}
+              title="Undo last AI generation (restore previous content)"
+              className="crec-btn-undo"
+            >
+              <i className="fa-solid fa-rotate-left"></i>
+            </STButton>
+          )}
           <STButton onClick={() => copyToClipboard(value)} disabled={!value} title="Copy content">
             <i className="fa-solid fa-copy"></i>
           </STButton>
@@ -129,7 +180,10 @@ export const CharacterField: FC<CharacterFieldProps> = ({
       </div>
       {promptEnabled && (
         <div className="field-prompt-container">
-          <div className="field-prompt-label">Field-specific prompt</div>
+          <div className="field-prompt-label">
+            Field-specific prompt
+            {!hasValue && <span className="crec-prompt-hint"> (used as revise direction once content exists)</span>}
+          </div>
           <textarea
             ref={promptTextareaRef}
             className="text_pole crec-field-textarea crec-field-prompt-textarea"

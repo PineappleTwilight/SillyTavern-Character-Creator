@@ -1,5 +1,6 @@
 import { FC, useState, useEffect, useMemo } from 'react';
 import { STButton } from 'sillytavern-utils-lib/components/react';
+import { GenerationMode } from '../generate.js';
 
 const globalContext = SillyTavern.getContext();
 
@@ -11,8 +12,9 @@ export interface Greeting {
 interface AlternateGreetingsProps {
   greetings: Greeting[];
   onGreetingsChange: (newGreetings: Greeting[]) => void;
-  onGenerate: (greetingIndex: number) => void;
-  onContinue: (greetingIndex: number) => void;
+  onGenerate: (greetingIndex: number, mode?: GenerationMode, continueFrom?: string) => void;
+  onUndo?: (greetingIndex: number) => void;
+  canUndo?: (greetingIndex: number) => boolean;
   onCompare: (greetingIndex: number) => void;
   onShowDebug?: (fieldId: string) => void;
   isGenerating: boolean;
@@ -24,7 +26,8 @@ export const AlternateGreetings: FC<AlternateGreetingsProps> = ({
   greetings,
   onGreetingsChange,
   onGenerate,
-  onContinue,
+  onUndo,
+  canUndo,
   onCompare,
   onShowDebug,
   isGenerating,
@@ -112,16 +115,63 @@ export const AlternateGreetings: FC<AlternateGreetingsProps> = ({
             </div>
           </div>
           <div className="field-actions">
-            <STButton onClick={() => onGenerate(activeTabIndex)} disabled={isGenerating} title="Generate greeting">
-              {isGenerating ? (
-                <i className="fa-solid fa-spinner fa-spin"></i>
-              ) : (
-                <i className="fa-solid fa-wand-magic-sparkles"></i>
-              )}
-            </STButton>
-            <STButton onClick={() => onContinue(activeTabIndex)} disabled={isGenerating} title="Continue greeting">
-              <i className="fa-solid fa-arrow-right"></i>
-            </STButton>
+            {(!activeGreeting?.value || activeGreeting.value.trim().length === 0) ? (
+              <STButton
+                onClick={() => onGenerate(activeTabIndex, 'generate')}
+                disabled={isGenerating}
+                title="Generate greeting from scratch"
+                className="crec-btn-generate-primary"
+              >
+                {isGenerating ? (
+                  <i className="fa-solid fa-spinner fa-spin"></i>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-wand-magic-sparkles"></i>
+                    <span className="crec-btn-label">Generate</span>
+                  </>
+                )}
+              </STButton>
+            ) : (
+              <>
+                <STButton
+                  onClick={() => onGenerate(activeTabIndex, 'continue', activeGreeting.value)}
+                  disabled={isGenerating}
+                  title="Continue from current content (append)"
+                  className="crec-btn-secondary"
+                >
+                  <i className="fa-solid fa-arrow-right"></i>
+                  <span className="crec-btn-label">Continue</span>
+                </STButton>
+                <STButton
+                  onClick={() => onGenerate(activeTabIndex, 'revise', activeGreeting.value)}
+                  disabled={isGenerating}
+                  title="Revise using the field-specific prompt below as your feedback direction"
+                  className="crec-btn-secondary"
+                >
+                  <i className="fa-solid fa-pen"></i>
+                  <span className="crec-btn-label">Revise</span>
+                </STButton>
+                <STButton
+                  onClick={() => onGenerate(activeTabIndex, 'improve', activeGreeting.value)}
+                  disabled={isGenerating}
+                  title="Improve quality, clarity, and consistency without changing intent"
+                  className="crec-btn-secondary"
+                >
+                  <i className="fa-solid fa-wand-sparkles"></i>
+                  <span className="crec-btn-label">Improve</span>
+                </STButton>
+              </>
+            )}
+            {onUndo && canUndo?.(activeTabIndex) && (
+              <STButton
+                onClick={() => onUndo(activeTabIndex)}
+                disabled={isGenerating}
+                title="Undo last AI generation (restore previous content)"
+                className="crec-btn-undo"
+              >
+                <i className="fa-solid fa-rotate-left"></i>
+              </STButton>
+            )}
             <STButton
               onClick={() => handleGreetingChange(activeTabIndex, 'value', '')}
               disabled={isGenerating}
